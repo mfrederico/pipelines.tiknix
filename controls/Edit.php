@@ -104,6 +104,29 @@ class Edit extends Control {
         Flight::json($r);
     }
 
+    /** POST /edit/debug — start a step-trace debug run; returns the first breakpoint. */
+    public function debug($params = []) {
+        [$s, $inst] = $this->guard();
+        if (!$inst) return;
+        $slug = (string) $this->getParam('slug');
+        $context = json_decode((string) $this->getParam('context'), true) ?: [];
+        $res = PipeFiles::debugStart(PipeFiles::instanceDir($inst), $slug, is_array($context) ? $context : []);
+        if (!empty($res['error'])) { Flight::jsonError($res['error'], 400); return; }
+        Flight::json($res);
+    }
+
+    /** POST /edit/debugstep — advance/finish/abort a debug run (patch = injected data). */
+    public function debugstep($params = []) {
+        [$s, $inst] = $this->guard();
+        if (!$inst) return;
+        $runId  = (int) $this->getParam('run_id');
+        $action = (string) ($this->getParam('action') ?: 'step');
+        $patch  = json_decode((string) $this->getParam('patch'), true);
+        $res = PipeFiles::debugStep(PipeFiles::instanceDir($inst), $runId, $action, is_array($patch) ? $patch : []);
+        if (!empty($res['error'])) { Flight::jsonError($res['error'], 400); return; }
+        Flight::json($res);
+    }
+
     // ---- guards ------------------------------------------------------------
 
     /** Require session + an authorized instance ( ?inst, else first accessible ). */

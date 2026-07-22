@@ -1,173 +1,428 @@
-<?php /** @var array $instances @var string $email @var array $components */
-$h = fn($s) => htmlspecialchars((string) $s); ?>
+<?php
+/**
+ * Pipeline Editor — visual step-card builder + step-trace debugger, in the tiknix
+ * design system (fonts + --ui-* tokens pulled from core). No hand-authored JSON:
+ * the JSON is the on-disk format only, behind an "Advanced" toggle.
+ *
+ * @var array  $instances  accessible instances [{slug,name,owned,app}]
+ * @var string $email      signed-in member email
+ * @var array  $components  type => {summary, fields[], config}
+ */
+$h = fn($s) => htmlspecialchars((string) $s);
+$coreUrl  = rtrim((string) (\Flight::get('sidecar.core_url') ?? ''), '/');
+$coreRoot = rtrim((string) (\Flight::get('sidecar.core_root') ?? ''), '/');
+$dsFile   = $coreRoot . '/views/components/design-system.php';
+?>
 <!DOCTYPE html>
-<html lang="en" data-bs-theme="dark">
+<html lang="en" data-bs-theme="light">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pipeline Editor</title>
+<title>Pipeline Editor · tiknix</title>
+<script>(function(){try{var t=localStorage.getItem('ui-theme');if(t)document.documentElement.setAttribute('data-bs-theme',t);}catch(e){}})();</script>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+<?php if ($coreUrl): ?><link href="<?= $h($coreUrl) ?>/css/app.css" rel="stylesheet"><?php endif; ?>
+<?php if (is_file($dsFile)) include $dsFile;   // tiknix fonts + --ui-* tokens + ui-* component classes ?>
 <style>
-  body { background:#0b1530; }
-  .navbar { border-bottom:1px solid rgba(255,255,255,.1); }
-  .brand b { color:#3b76f0; }
-  .side { max-height:calc(100vh - 120px); overflow:auto; }
-  .plist .list-group-item { cursor:pointer; background:transparent; }
-  .plist .list-group-item.active { background:#243056; border-color:#3b76f0; }
-  #editor { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px; min-height:52vh; white-space:pre; tab-size:2; }
-  .step-row { font-family:ui-monospace,monospace; font-size:12.5px; }
-  .st-completed{color:#3bbf7a}.st-failed{color:#e0559b}.st-running{color:#e0a23b}.st-awaiting{color:#8ab4ff}
-  .comp code { color:#8ab4ff; }
-  .comp .cfg { color:#9ba4bd; font-size:12px; }
-  .muted { color:#9ba4bd; }
-  pre.out { background:#060d20; border:1px solid rgba(255,255,255,.1); border-radius:8px; padding:.6rem; font-size:12px; max-height:30vh; overflow:auto; }
+  .pe-topbar .brand-word{font-family:'Playfair Display',Georgia,serif;font-weight:600;font-size:1.35rem;letter-spacing:.005em;}
+  .pe-list .item{cursor:pointer;border:1px solid var(--bs-border-color);background:var(--ui-surface);border-radius:.75rem;padding:.6rem .75rem;margin-bottom:.5rem;transition:.12s;}
+  .pe-list .item:hover{border-color:var(--ui-primary);}
+  .pe-list .item.active{border-color:var(--ui-primary);box-shadow:0 0 0 1px var(--ui-primary) inset;}
+  .pe-list .item .nm{font-weight:600;font-family:var(--ui-ff-display);}
+  .step-card{background:var(--ui-surface);border:1px solid var(--bs-border-color);border-radius:1rem;box-shadow:var(--ui-shadow);margin-bottom:.85rem;overflow:hidden;}
+  .step-card .sc-head{display:flex;align-items:center;gap:.5rem;padding:.6rem .8rem;background:var(--ui-surface-soft);border-bottom:1px solid var(--bs-border-color);}
+  .step-card .sc-idx{width:1.7rem;height:1.7rem;border-radius:50%;display:grid;place-items:center;background:var(--ui-primary);color:#fff;font-family:var(--ui-ff-mono);font-size:.8rem;font-weight:600;flex:0 0 auto;}
+  .step-card .sc-body{padding:.75rem .8rem;}
+  .step-card .sc-flow{display:flex;gap:.75rem;flex-wrap:wrap;padding:.4rem .8rem .7rem;}
+  .fld-help{font-size:.76rem;color:var(--bs-tertiary-color);}
+  .fld-label{font-size:.78rem;font-weight:600;color:var(--bs-secondary-color);margin-bottom:.15rem;}
+  .fld-label .req{color:var(--ui-accent-report);}
+  .mono, #jsonBox, .bag-view{font-family:var(--ui-ff-mono);font-size:12.5px;}
+  .st-completed{color:#3bbf7a}.st-failed{color:#e0559b}.st-running,.st-awaiting{color:#e0a23b}.st-pending{color:var(--bs-tertiary-color)}
+  .trace-step{border:1px solid var(--bs-border-color);border-radius:.6rem;padding:.45rem .6rem;margin-bottom:.4rem;font-size:.85rem;}
+  .trace-step.cur{border-color:var(--ui-primary);box-shadow:0 0 0 1px var(--ui-primary) inset;}
+  pre.io{background:var(--ui-surface-inset);border-radius:.5rem;padding:.5rem;margin:.35rem 0 0;font-size:11.5px;max-height:26vh;overflow:auto;white-space:pre-wrap;word-break:break-word;}
+  .type-menu{max-height:60vh;overflow:auto;}
+  .type-menu .t{font-family:var(--ui-ff-mono);}
+  .comp code{color:var(--bs-link-color);}
+  textarea.code{font-family:var(--ui-ff-mono);font-size:12.5px;white-space:pre;tab-size:2;}
 </style>
 </head>
 <body>
-<nav class="navbar px-3">
-  <span class="navbar-brand mb-0">Pipeline <b>Editor</b></span>
-  <div class="d-flex align-items-center gap-2">
+
+<header class="ui-topbar pe-topbar">
+  <a href="/edit" class="text-decoration-none d-flex align-items-center gap-2" style="color:inherit">
+    <span class="brand-word">tiknix</span>
+    <span class="ui-eyebrow" style="letter-spacing:.16em">Pipelines</span>
+  </a>
+  <div class="ms-auto d-flex align-items-center gap-2">
+    <?php if ($instances): ?>
     <select id="inst" class="form-select form-select-sm" style="width:auto">
       <?php foreach ($instances as $i): ?>
         <option value="<?= $h($i['slug']) ?>"><?= $h($i['name']) ?> (<?= $h($i['slug']) ?>)<?= $i['owned'] ? '' : ' · team' ?></option>
       <?php endforeach; ?>
     </select>
-    <span class="muted small"><?= $h($email) ?></span>
+    <?php endif; ?>
+    <button class="ui-btn-icon" id="themeToggle" type="button" title="Toggle theme"><i class="bi bi-moon-stars"></i></button>
+    <span class="d-none d-md-inline" style="font-size:.85rem;color:var(--bs-secondary-color)"><?= $h($email) ?></span>
     <a class="btn btn-sm btn-outline-secondary" href="/sso/logout">Sign out</a>
   </div>
-</nav>
+</header>
 
+<div class="ui-content">
 <?php if (!$instances): ?>
-  <div class="container py-5 text-center muted">You have no instances yet. Create one in the AI Builder, then build pipelines here.</div>
+  <div class="ui-panel"><div class="ui-panel-body text-center" style="color:var(--bs-secondary-color)">
+    You have no instances yet. Create one in the AI Builder, then build pipelines here.
+  </div></div>
 <?php else: ?>
-<div class="container-fluid py-3">
   <div class="row g-3">
-    <!-- pipeline list -->
+
+    <!-- ============ pipeline list ============ -->
     <div class="col-lg-3">
       <div class="d-flex justify-content-between align-items-center mb-2">
-        <h6 class="text-uppercase muted mb-0">Pipelines</h6>
+        <span class="ui-eyebrow">Pipelines</span>
         <button class="btn btn-sm btn-primary" onclick="newPipeline()"><i class="bi bi-plus-lg"></i> New</button>
       </div>
-      <div id="plist" class="list-group plist side"></div>
+      <div id="plist" class="pe-list"></div>
     </div>
 
-    <!-- editor -->
+    <!-- ============ builder ============ -->
     <div class="col-lg-6">
-      <div class="d-flex gap-2 mb-2">
+      <div class="d-flex gap-2 mb-3 flex-wrap">
         <button class="btn btn-sm btn-outline-info" onclick="validateDef()"><i class="bi bi-check2-circle"></i> Validate</button>
-        <button class="btn btn-sm btn-success" onclick="saveDef()"><i class="bi bi-save"></i> Save</button>
-        <button class="btn btn-sm btn-outline-warning" onclick="runDef()"><i class="bi bi-play-fill"></i> Run</button>
-        <button class="btn btn-sm btn-outline-danger ms-auto" onclick="deleteDef()"><i class="bi bi-trash"></i></button>
+        <button class="btn btn-sm btn-primary" onclick="saveDef()"><i class="bi bi-save"></i> Save</button>
+        <button class="btn btn-sm btn-success" onclick="runDef()"><i class="bi bi-play-fill"></i> Run</button>
+        <button class="btn btn-sm btn-warning" onclick="debugStart()"><i class="bi bi-bug"></i> Debug</button>
+        <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="toggleJson()"><i class="bi bi-code-slash"></i> JSON</button>
+        <button class="btn btn-sm btn-outline-danger" onclick="deleteDef()"><i class="bi bi-trash"></i></button>
       </div>
-      <textarea id="editor" class="form-control" spellcheck="false"></textarea>
-      <div id="msg" class="small mt-2"></div>
-    </div>
+      <div id="msg" class="small mb-2"></div>
 
-    <!-- run watch + components -->
-    <div class="col-lg-3 side">
-      <h6 class="text-uppercase muted">Run</h6>
-      <label class="small muted">Test context (JSON)</label>
-      <textarea id="ctx" class="form-control form-control-sm mb-2" rows="2" spellcheck="false">{}</textarea>
-      <div id="runbox" class="mb-3"></div>
+      <div id="builder">
+        <div class="ui-panel"><div class="ui-panel-body" style="color:var(--bs-secondary-color)">Select a pipeline, or click <b>New</b>.</div></div>
+      </div>
 
-      <h6 class="text-uppercase muted mt-2">Step types</h6>
-      <div class="comp small">
-        <?php foreach ($components as $type => $c): ?>
-          <div class="mb-2">
-            <code><?= $h($type) ?></code> — <?= $h($c['summary'] ?? '') ?>
-            <?php if (!empty($c['config'])): ?>
-              <div class="cfg"><?php foreach ($c['config'] as $k => $desc): ?>&nbsp;&nbsp;<b><?= $h($k) ?></b>: <?= $h($desc) ?><br><?php endforeach; ?></div>
-            <?php endif; ?>
-          </div>
-        <?php endforeach; ?>
+      <!-- advanced JSON -->
+      <div id="jsonWrap" class="ui-panel mt-3" style="display:none">
+        <div class="ui-panel-header"><span class="ui-eyebrow">Advanced · raw JSON</span>
+          <button class="btn btn-sm btn-outline-primary" onclick="applyJson()">Apply JSON → builder</button></div>
+        <div class="ui-panel-body"><textarea id="jsonBox" class="form-control code" rows="16" spellcheck="false"></textarea></div>
       </div>
     </div>
+
+    <!-- ============ run / debug + reference ============ -->
+    <div class="col-lg-3">
+      <div class="ui-panel mb-3">
+        <div class="ui-panel-header"><span class="ui-eyebrow">Run / Debug</span></div>
+        <div class="ui-panel-body">
+          <label class="fld-label">Test context (JSON)</label>
+          <textarea id="ctx" class="form-control form-control-sm code mb-2" rows="3" spellcheck="false">{}</textarea>
+          <div id="runbox" class="small"></div>
+        </div>
+      </div>
+
+      <div class="ui-panel">
+        <div class="ui-panel-header"><span class="ui-eyebrow">Step types</span></div>
+        <div class="ui-panel-body comp small">
+          <?php foreach ($components as $type => $c): ?>
+            <div class="mb-2"><code><?= $h($type) ?></code> — <?= $h($c['summary'] ?? '') ?></div>
+          <?php endforeach; ?>
+        </div>
+      </div>
+    </div>
+
   </div>
-</div>
 <?php endif; ?>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
 "use strict";
+const COMPONENTS = <?= json_encode($components, JSON_UNESCAPED_SLASHES) ?> || {};
+const TYPES = Object.keys(COMPONENTS);
 const $ = s => document.querySelector(s);
-const inst = () => $('#inst').value;
-let CURRENT = null, watchTimer = null;
+const inst = () => $('#inst') ? $('#inst').value : '';
+let DEF = null, CURRENT = null, watchTimer = null, DEBUG = null;
 
-const TEMPLATE = {
-  slug: "my-pipeline", name: "My pipeline", description: "",
-  expose_as_tool: false, expose_as_api: false,
-  context_schema: { name: { type: "string", required: true } },
-  steps: [ { name: "greet", type: "transform", config: { mode: "template", input: "Hello {context.name}" }, on_success: "exit" } ]
-};
+// ---- theme toggle (shares the tiknix 'ui-theme' key) ----
+$('#themeToggle') && ($('#themeToggle').onclick = () => {
+  const cur = document.documentElement.getAttribute('data-bs-theme') === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-bs-theme', cur);
+  try { localStorage.setItem('ui-theme', cur); } catch(e){}
+});
 
+// ---- helpers ----
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function msg(t,cls){ $('#msg').innerHTML = t ? `<span class="text-${cls}">${esc(t)}</span>` : ''; }
 async function jget(u){ const r=await fetch(u,{headers:{Accept:'application/json'}}); const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.message||('HTTP '+r.status)); return d; }
-async function jpost(u,body){ const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(body)}); const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.message||('HTTP '+r.status)); return d; }
-function msg(text,cls){ $('#msg').innerHTML = text ? `<span class="text-${cls}">${esc(text)}</span>` : ''; }
-function esc(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+async function jpost(u,b){ const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(b)}); const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.message||('HTTP '+r.status)); return d; }
 
+const TEMPLATE = () => ({
+  slug:"my-pipeline", name:"My pipeline", description:"",
+  expose_as_tool:false, expose_as_api:false, trigger:{cron:""},
+  context_schema:{ name:{ type:"string", required:true } },
+  steps:[ { name:"greet", type:"transform", config:{ mode:"template", input:"Hello {context.name}" }, on_success:"exit", on_fail:"exit" } ]
+});
+
+// ---- pipeline list ----
 async function loadList(){
-  try {
+  try{
     const d = await jget('/edit/pipelines?inst='+encodeURIComponent(inst()));
-    const el = $('#plist'); el.innerHTML='';
+    const el=$('#plist'); el.innerHTML='';
+    if(!d.pipelines.length){ el.innerHTML='<div class="small" style="color:var(--bs-tertiary-color)">No pipelines yet — click New.</div>'; return; }
     d.pipelines.forEach(p=>{
-      const badges = (p.expose_as_tool?'<span class="badge text-bg-primary ms-1">tool</span>':'')
-        + (p.expose_as_api?'<span class="badge text-bg-info ms-1">api</span>':'')
-        + (p.cron?'<span class="badge text-bg-secondary ms-1" title="'+esc(p.cron)+'"><i class="bi bi-clock"></i></span>':'');
-      const a=document.createElement('div'); a.className='list-group-item'+(CURRENT===p.slug?' active':'');
-      a.innerHTML=`<div class="d-flex justify-content-between"><span><b>${esc(p.name)}</b><br><span class="muted small">${esc(p.slug)} · ${p.steps} steps</span></span><span>${badges}</span></div>`;
-      a.onclick=()=>openPipeline(p.slug);
-      el.appendChild(a);
+      const badges=(p.expose_as_tool?'<span class="ui-chip" style="padding:.05rem .45rem;font-size:.7rem">tool</span> ':'')
+        +(p.expose_as_api?'<span class="ui-chip" style="padding:.05rem .45rem;font-size:.7rem">api</span> ':'')
+        +(p.cron?'<span class="ui-chip" style="padding:.05rem .45rem;font-size:.7rem" title="'+esc(p.cron)+'"><i class="bi bi-clock"></i></span>':'');
+      const div=document.createElement('div'); div.className='item'+(CURRENT===p.slug?' active':'');
+      div.innerHTML=`<div class="d-flex justify-content-between align-items-start gap-2"><div><div class="nm">${esc(p.name)}</div><div class="small" style="color:var(--bs-tertiary-color)">${esc(p.slug)} · ${p.steps} steps</div></div><div class="text-end">${badges}</div></div>`;
+      div.onclick=()=>openPipeline(p.slug);
+      el.appendChild(div);
     });
-    if(!d.pipelines.length) el.innerHTML='<div class="muted small p-2">No pipelines yet — click New.</div>';
-  } catch(e){ msg(e.message,'danger'); }
+  }catch(e){ msg(e.message,'danger'); }
 }
 async function openPipeline(slug){
-  try { const d=await jget('/edit/get?inst='+encodeURIComponent(inst())+'&slug='+encodeURIComponent(slug));
-    CURRENT=slug; $('#editor').value=JSON.stringify(d.def,null,2); msg('',''); $('#runbox').innerHTML=''; loadList();
-  } catch(e){ msg(e.message,'danger'); }
+  try{ const d=await jget('/edit/get?inst='+encodeURIComponent(inst())+'&slug='+encodeURIComponent(slug));
+    DEF=normalize(d.def); CURRENT=slug; DEBUG=null; $('#runbox').innerHTML=''; msg('',''); renderBuilder(); loadList();
+  }catch(e){ msg(e.message,'danger'); }
 }
-function newPipeline(){ CURRENT=null; $('#editor').value=JSON.stringify(TEMPLATE,null,2); msg('New pipeline — edit the slug + steps, then Save.','info'); loadList(); }
-function parseDef(){ try { return JSON.parse($('#editor').value); } catch(e){ msg('Invalid JSON: '+e.message,'danger'); return null; } }
+function newPipeline(){ DEF=normalize(TEMPLATE()); CURRENT=null; DEBUG=null; $('#runbox').innerHTML=''; msg('New pipeline — edit + Save.','info'); renderBuilder(); loadList(); }
 
-async function validateDef(){ const def=parseDef(); if(!def) return;
-  try { const d=await jpost('/edit/validate',{inst:inst(),def:JSON.stringify(def)});
-    d.valid ? msg('Valid ✓','success') : msg('Invalid: '+d.errors.join('; '),'danger');
-  } catch(e){ msg(e.message,'danger'); } }
-async function saveDef(){ const def=parseDef(); if(!def) return;
-  try { const d=await jpost('/edit/save',{inst:inst(),def:JSON.stringify(def)});
-    if(d.ok){ CURRENT=def.slug; msg('Saved '+d.file+' ✓','success'); loadList(); }
-    else msg('Not saved: '+(d.errors||[]).join('; '),'danger');
-  } catch(e){ msg(e.message,'danger'); } }
+function normalize(def){
+  def=def||{}; def.steps=Array.isArray(def.steps)?def.steps:[];
+  def.steps.forEach(s=>{ s.config=s.config||{}; s.on_success=s.on_success||'next'; s.on_fail=s.on_fail||'exit'; });
+  def.context_schema=def.context_schema||{}; def.trigger=def.trigger||{};
+  return def;
+}
+
+// ---- builder render ----
+function renderBuilder(){
+  if(!DEF){ return; }
+  const settings = `
+    <div class="ui-panel mb-3"><div class="ui-panel-body">
+      <div class="row g-2">
+        <div class="col-6"><div class="fld-label">Slug <span class="req">*</span></div>
+          <input class="form-control form-control-sm" data-meta="slug" value="${esc(DEF.slug||'')}"></div>
+        <div class="col-6"><div class="fld-label">Name</div>
+          <input class="form-control form-control-sm" data-meta="name" value="${esc(DEF.name||'')}"></div>
+        <div class="col-12"><div class="fld-label">Description</div>
+          <input class="form-control form-control-sm" data-meta="description" value="${esc(DEF.description||'')}"></div>
+        <div class="col-6 d-flex align-items-center gap-2 pt-2">
+          <div class="form-check form-switch"><input class="form-check-input" type="checkbox" data-meta="expose_as_tool" ${DEF.expose_as_tool?'checked':''}><label class="form-check-label small">Expose as MCP tool</label></div>
+        </div>
+        <div class="col-6 d-flex align-items-center gap-2 pt-2">
+          <div class="form-check form-switch"><input class="form-check-input" type="checkbox" data-meta="expose_as_api" ${DEF.expose_as_api?'checked':''}><label class="form-check-label small">Expose as REST API</label></div>
+        </div>
+        <div class="col-6"><div class="fld-label">Schedule (cron)</div>
+          <input class="form-control form-control-sm mono" data-meta="cron" placeholder="*/15 * * * *" value="${esc((DEF.trigger&&DEF.trigger.cron)||'')}"></div>
+        <div class="col-6"><div class="fld-label">Context variables</div><div id="ctxRows"></div>
+          <button class="btn btn-sm btn-outline-secondary mt-1" onclick="addCtxVar()"><i class="bi bi-plus"></i> variable</button></div>
+      </div>
+    </div></div>`;
+
+  const cards = DEF.steps.map((s,i)=>renderStep(s,i)).join('');
+  const addMenu = `
+    <div class="dropdown">
+      <button class="btn btn-outline-primary w-100" data-bs-toggle="dropdown"><i class="bi bi-plus-lg"></i> Add step</button>
+      <ul class="dropdown-menu type-menu w-100">
+        ${TYPES.map(t=>`<li><a class="dropdown-item" href="#" onclick="addStep('${t}');return false"><span class="t">${esc(t)}</span><div class="small" style="color:var(--bs-tertiary-color)">${esc(COMPONENTS[t].summary||'')}</div></a></li>`).join('')}
+      </ul>
+    </div>`;
+
+  $('#builder').innerHTML = settings + `<div id="cards">${cards}</div>` + addMenu;
+  renderCtxRows();
+  syncJson();
+}
+
+function flowSelect(step,i,which){
+  const others=DEF.steps.filter((_,k)=>k!==i).map(s=>s.name);
+  const val=step[which]|| (which==='on_success'?'next':'exit');
+  const opts=['next','exit',...others.map(n=>'goto:'+n)];
+  if(val.startsWith('goto:') && !others.includes(val.slice(5))) opts.push(val); // keep dangling goto visible
+  return `<div><span class="fld-label">${which==='on_success'?'on success →':'on fail →'}</span>
+    <select class="form-select form-select-sm" data-si="${i}" data-flow="${which}" style="width:auto;display:inline-block">
+      ${opts.map(o=>`<option value="${esc(o)}" ${o===val?'selected':''}>${esc(o)}</option>`).join('')}
+    </select></div>`;
+}
+
+function renderStep(step,i){
+  const comp=COMPONENTS[step.type]||{fields:[]};
+  const fields=(comp.fields||[]).map(f=>renderField(f,step.config[f.name],i)).join('');
+  const typeOpts=TYPES.map(t=>`<option value="${t}" ${t===step.type?'selected':''}>${t}</option>`).join('');
+  return `<div class="step-card">
+    <div class="sc-head">
+      <span class="sc-idx">${i+1}</span>
+      <input class="form-control form-control-sm" style="max-width:12rem" data-si="${i}" data-meta="name" value="${esc(step.name||'')}">
+      <select class="form-select form-select-sm" style="width:auto" data-si="${i}" data-meta="type">${typeOpts}</select>
+      <span class="small ms-1" style="color:var(--bs-tertiary-color)">${esc(comp.summary||'')}</span>
+      <span class="ms-auto d-flex gap-1">
+        <button class="ui-btn-icon" style="width:30px;height:30px" title="Move up" onclick="moveStep(${i},-1)"><i class="bi bi-arrow-up"></i></button>
+        <button class="ui-btn-icon" style="width:30px;height:30px" title="Move down" onclick="moveStep(${i},1)"><i class="bi bi-arrow-down"></i></button>
+        <button class="ui-btn-icon" style="width:30px;height:30px" title="Delete" onclick="removeStep(${i})"><i class="bi bi-x-lg"></i></button>
+      </span>
+    </div>
+    <div class="sc-body"><div class="row g-2">${fields}</div></div>
+    <div class="sc-flow">${flowSelect(step,i,'on_success')}${flowSelect(step,i,'on_fail')}</div>
+  </div>`;
+}
+
+function renderField(f,val,i){
+  const req=f.required?' <span class="req">*</span>':'';
+  const lab=`<div class="fld-label">${esc(f.label||f.name)}${req}</div>`;
+  const help=f.help?`<div class="fld-help">${esc(f.help)}</div>`:'';
+  const da=`data-si="${i}" data-field="${f.name}" data-ftype="${f.type}"`;
+  let input='';
+  const col = (f.type==='textarea'||f.type==='keyval'||f.type==='list') ? 'col-12' : 'col-6';
+  if(f.type==='textarea'){ input=`<textarea class="form-control form-control-sm code" rows="2" ${da}>${esc(val||'')}</textarea>`; }
+  else if(f.type==='number'){ input=`<input type="number" class="form-control form-control-sm" ${da} value="${val==null?'':esc(val)}">`; }
+  else if(f.type==='bool'){ return `<div class="col-6"><div class="form-check form-switch mt-3"><input class="form-check-input" type="checkbox" ${da} ${val?'checked':''}><label class="form-check-label fld-label">${esc(f.label||f.name)}</label></div>${help}</div>`; }
+  else if(f.type==='select'){ input=`<select class="form-select form-select-sm" ${da}><option value="">—</option>${(f.options||[]).map(o=>`<option value="${esc(o)}" ${o===val?'selected':''}>${esc(o)}</option>`).join('')}</select>`; }
+  else if(f.type==='keyval'){ input=`<textarea class="form-control form-control-sm code" rows="2" placeholder='{"key":"value"}' ${da}>${esc(val&&Object.keys(val).length?JSON.stringify(val):'')}</textarea>`; }
+  else if(f.type==='list'){ input=`<textarea class="form-control form-control-sm code" rows="2" placeholder="one value per line" ${da}>${esc(Array.isArray(val)?val.join('\n'):'')}</textarea>`; }
+  else { input=`<input class="form-control form-control-sm" ${da} value="${esc(val==null?'':val)}">`; }
+  return `<div class="${col}">${lab}${input}${help}</div>`;
+}
+
+// ---- builder events (delegated) ----
+$('#builder') && $('#builder').addEventListener('input', onBuilderChange);
+$('#builder') && $('#builder').addEventListener('change', onBuilderChange);
+function onBuilderChange(e){
+  const t=e.target; if(!DEF) return;
+  const meta=t.getAttribute('data-meta'), si=t.getAttribute('data-si'), field=t.getAttribute('data-field'), flow=t.getAttribute('data-flow');
+  // top-level meta (no data-si)
+  if(meta && si===null){
+    if(meta==='expose_as_tool'||meta==='expose_as_api'){ DEF[meta]=t.checked; }
+    else if(meta==='cron'){ DEF.trigger=DEF.trigger||{}; DEF.trigger.cron=t.value; }
+    else { DEF[meta]=t.value; }
+    syncJson(); return;
+  }
+  const i=parseInt(si,10); if(isNaN(i)||!DEF.steps[i]) return;
+  if(meta==='name'){ DEF.steps[i].name=t.value; syncJson(); rerenderFlows(); return; }
+  if(meta==='type'){ DEF.steps[i].type=t.value; DEF.steps[i].config={}; renderBuilder(); return; }
+  if(flow){ DEF.steps[i][flow]=t.value; syncJson(); return; }
+  if(field){ setStepField(i,field,t); syncJson(); return; }
+}
+function setStepField(i,name,el){
+  const ftype=el.getAttribute('data-ftype'); const cfg=DEF.steps[i].config;
+  if(ftype==='bool'){ cfg[name]=el.checked; return; }
+  if(ftype==='number'){ if(el.value==='') delete cfg[name]; else cfg[name]=Number(el.value); return; }
+  if(ftype==='keyval'){ const v=el.value.trim(); if(!v){ delete cfg[name]; el.classList.remove('is-invalid'); return; } try{ cfg[name]=JSON.parse(v); el.classList.remove('is-invalid'); }catch(_){ el.classList.add('is-invalid'); } return; }
+  if(ftype==='list'){ const arr=el.value.split('\n').map(s=>s.trim()).filter(Boolean); if(arr.length) cfg[name]=arr; else delete cfg[name]; return; }
+  if(el.value==='') delete cfg[name]; else cfg[name]=el.value;
+}
+// re-render only the flow dropdowns (names changed) without losing focus mid-typing
+function rerenderFlows(){ DEF.steps.forEach((s,i)=>{ ['on_success','on_fail'].forEach(w=>{ const sel=document.querySelector(`select[data-si="${i}"][data-flow="${w}"]`); if(sel){ const wrap=sel.parentElement; wrap.outerHTML=flowSelect(s,i,w); } }); }); }
+
+function addStep(type){
+  const n=DEF.steps.length+1; DEF.steps.push({name:type+n, type:type, config:{}, on_success:'next', on_fail:'exit'}); renderBuilder();
+}
+function removeStep(i){ DEF.steps.splice(i,1); renderBuilder(); }
+function moveStep(i,d){ const j=i+d; if(j<0||j>=DEF.steps.length) return; const [s]=DEF.steps.splice(i,1); DEF.steps.splice(j,0,s); renderBuilder(); }
+
+// ---- context schema rows ----
+function renderCtxRows(){
+  const host=$('#ctxRows'); if(!host) return; host.innerHTML='';
+  Object.entries(DEF.context_schema||{}).forEach(([k,spec])=>{
+    spec=spec||{}; const row=document.createElement('div'); row.className='d-flex gap-1 mb-1';
+    row.innerHTML=`<input class="form-control form-control-sm" value="${esc(k)}" data-ck="name" data-cold="${esc(k)}" placeholder="name">
+      <select class="form-select form-select-sm" data-ck="type" style="max-width:6.5rem">
+        ${['string','number','boolean','object'].map(t=>`<option ${((spec.type||'string')===t)?'selected':''}>${t}</option>`).join('')}</select>
+      <div class="form-check form-switch d-flex align-items-center" title="required"><input class="form-check-input" type="checkbox" data-ck="required" ${spec.required?'checked':''}></div>
+      <button class="ui-btn-icon" style="width:30px;height:30px" onclick="delCtxVar('${esc(k)}')"><i class="bi bi-x"></i></button>`;
+    host.appendChild(row);
+  });
+  host.querySelectorAll('[data-ck]').forEach(el=> el.addEventListener('change', syncCtxVars));
+}
+function syncCtxVars(){
+  const rows=$('#ctxRows').querySelectorAll('.d-flex'); const out={};
+  rows.forEach(r=>{ const name=r.querySelector('[data-ck="name"]').value.trim(); if(!name) return;
+    out[name]={ type:r.querySelector('[data-ck="type"]').value, required:r.querySelector('[data-ck="required"]').checked }; });
+  DEF.context_schema=out; syncJson();
+}
+function addCtxVar(){ DEF.context_schema=DEF.context_schema||{}; let n='var',i=1; while(DEF.context_schema[n]) n='var'+(++i); DEF.context_schema[n]={type:'string',required:false}; renderCtxRows(); syncJson(); }
+function delCtxVar(k){ delete DEF.context_schema[k]; renderCtxRows(); syncJson(); }
+
+// ---- JSON advanced ----
+function syncJson(){ const b=$('#jsonBox'); if(b) b.value=JSON.stringify(DEF,null,2); }
+function toggleJson(){ const w=$('#jsonWrap'); w.style.display = w.style.display==='none' ? 'block':'none'; }
+function applyJson(){ try{ DEF=normalize(JSON.parse($('#jsonBox').value)); renderBuilder(); msg('Applied JSON ✓','success'); }catch(e){ msg('Invalid JSON: '+e.message,'danger'); } }
+
+// ---- validate / save / delete ----
+async function validateDef(){ if(!DEF) return;
+  try{ const d=await jpost('/edit/validate',{inst:inst(),def:JSON.stringify(DEF)});
+    d.valid? msg('Valid ✓','success') : msg('Invalid: '+d.errors.join('; '),'danger'); }catch(e){ msg(e.message,'danger'); } }
+async function saveDef(){ if(!DEF) return;
+  try{ const d=await jpost('/edit/save',{inst:inst(),def:JSON.stringify(DEF)});
+    if(d.ok){ CURRENT=DEF.slug; msg('Saved '+d.file+' ✓','success'); loadList(); } else msg('Not saved: '+(d.errors||[]).join('; '),'danger');
+  }catch(e){ msg(e.message,'danger'); } }
 async function deleteDef(){ if(!CURRENT||!confirm('Delete '+CURRENT+'?')) return;
-  try { await jpost('/edit/delete',{inst:inst(),slug:CURRENT}); CURRENT=null; $('#editor').value=''; loadList(); msg('Deleted.','muted'); }
-  catch(e){ msg(e.message,'danger'); } }
+  try{ await jpost('/edit/delete',{inst:inst(),slug:CURRENT}); CURRENT=null; DEF=null; $('#builder').innerHTML=''; loadList(); msg('Deleted.','secondary'); }catch(e){ msg(e.message,'danger'); } }
 
-async function runDef(){ const def=parseDef(); if(!def||!def.slug) { msg('Save the pipeline first.','warning'); return; }
-  try {
-    const d=await jpost('/edit/run',{inst:inst(),slug:def.slug,context:$('#ctx').value||'{}'});
-    watchRun(d.run_id);
-  } catch(e){ msg(e.message,'danger'); }
-}
+// ---- normal run + watch ----
+async function runDef(){ if(!DEF||!DEF.slug){ msg('Save first.','warning'); return; }
+  try{ await saveDef(); const d=await jpost('/edit/run',{inst:inst(),slug:DEF.slug,context:$('#ctx').value||'{}'}); watchRun(d.run_id); }catch(e){ msg(e.message,'danger'); } }
 function watchRun(runId){
-  if(watchTimer) clearInterval(watchTimer);
-  const render = (r)=>{
-    let html=`<div class="mb-1"><b>Run #${runId}</b> <span class="st-${r.status}">${esc(r.status)}</span> <span class="muted">${r.steps_done}/${r.steps_total}</span></div>`;
-    (r.steps||[]).forEach(s=>{ html+=`<div class="step-row st-${s.status}">${s.status==='completed'?'✓':s.status==='failed'?'✗':'…'} ${esc(s.step)} <span class="muted">[${esc(s.type)}] ${s.duration_ms}ms</span>${s.stderr?'<br><span class="text-danger">'+esc(s.stderr)+'</span>':''}</div>`; });
-    if(r.await_prompt) html+=`<div class="text-info small mt-1">⏸ awaiting: ${esc(r.await_prompt)}</div>`;
-    if(r.output!=null) html+=`<div class="muted small mt-2">output:</div><pre class="out">${esc(JSON.stringify(r.output,null,2))}</pre>`;
-    $('#runbox').innerHTML=html;
-  };
-  const poll=async()=>{
-    try{ const r=await jget('/edit/runstatus?inst='+encodeURIComponent(inst())+'&run_id='+runId); render(r);
-      if(['completed','failed','paused'].includes(r.status)){ clearInterval(watchTimer); watchTimer=null; }
-    }catch(e){ /* run may not be written yet — keep polling briefly */ }
-  };
-  $('#runbox').innerHTML='<div class="muted small">Starting run…</div>';
-  poll(); watchTimer=setInterval(poll,1000);
+  if(watchTimer) clearInterval(watchTimer); DEBUG=null;
+  const render=r=>{ let h=`<div class="mb-1"><b>Run #${runId}</b> <span class="st-${r.status}">${esc(r.status)}</span> <span style="color:var(--bs-tertiary-color)">${r.steps_done}/${r.steps_total}</span></div>`;
+    (r.steps||[]).forEach(s=>{ h+=`<div class="st-${s.status}">${s.status==='completed'?'✓':s.status==='failed'?'✗':'…'} ${esc(s.step)} <span style="color:var(--bs-tertiary-color)">[${esc(s.type)}] ${s.duration_ms||0}ms</span></div>`; });
+    if(r.await_prompt) h+=`<div class="st-awaiting mt-1">⏸ awaiting: ${esc(r.await_prompt)}</div>`;
+    if(r.output!=null) h+=`<div class="small mt-2" style="color:var(--bs-tertiary-color)">output</div><pre class="io">${esc(JSON.stringify(r.output,null,2))}</pre>`;
+    $('#runbox').innerHTML=h; };
+  const poll=async()=>{ try{ const r=await jget('/edit/runstatus?inst='+encodeURIComponent(inst())+'&run_id='+runId); render(r);
+    if(['completed','failed','paused'].includes(r.status)){ clearInterval(watchTimer); watchTimer=null; } }catch(e){} };
+  $('#runbox').innerHTML='<div class="small" style="color:var(--bs-tertiary-color)">Starting…</div>'; poll(); watchTimer=setInterval(poll,1000);
 }
 
-$('#inst') && ($('#inst').onchange=()=>{ CURRENT=null; $('#editor').value=''; loadList(); });
-if (<?= $instances ? 'true':'false' ?>) loadList();
+// ---- debugger ----
+async function debugStart(){ if(!DEF||!DEF.slug){ msg('Save first.','warning'); return; }
+  try{ await saveDef(); $('#runbox').innerHTML='<div class="small" style="color:var(--bs-tertiary-color)">Starting debug…</div>';
+    const bp=await jpost('/edit/debug',{inst:inst(),slug:DEF.slug,context:$('#ctx').value||'{}'}); renderDebug(bp);
+  }catch(e){ msg(e.message,'danger'); $('#runbox').innerHTML=''; } }
+async function debugAct(action){
+  const patch=$('#patchBox')?$('#patchBox').value.trim():'';
+  let parsed={}; if(patch){ try{ parsed=JSON.parse(patch); }catch(e){ msg('Inject data is not valid JSON.','danger'); return; } }
+  try{ const bp=await jpost('/edit/debugstep',{inst:inst(),run_id:DEBUG.run_id,action:action,patch:JSON.stringify(parsed)}); renderDebug(bp); }
+  catch(e){ msg(e.message,'danger'); }
+}
+function renderDebug(bp){
+  DEBUG=bp;
+  const paused=bp.debug && bp.status==='paused';
+  let h=`<div class="mb-2"><b>Debug #${bp.run_id}</b> <span class="st-${bp.status}">${esc(bp.status)}</span> <span style="color:var(--bs-tertiary-color)">${bp.steps_done}/${bp.steps_total}</span></div>`;
+  (bp.steps||[]).forEach(s=>{
+    const cur=paused && s.step===bp.last_step;
+    h+=`<div class="trace-step ${cur?'cur':''}"><div><span class="st-${s.status}">${s.status==='completed'?'✓':s.status==='failed'?'✗':'…'}</span> <b>${esc(s.step)}</b> <span style="color:var(--bs-tertiary-color)">[${esc(s.type)}] ${s.duration_ms||0}ms</span></div>`;
+    if(cur){
+      if(s.input!=null) h+=`<div class="small mt-1" style="color:var(--bs-tertiary-color)">resolved input</div><pre class="io">${esc(JSON.stringify(s.input,null,2))}</pre>`;
+      if(s.output!=null) h+=`<div class="small" style="color:var(--bs-tertiary-color)">output</div><pre class="io">${esc(JSON.stringify(s.output,null,2))}</pre>`;
+      if(s.stderr) h+=`<pre class="io st-failed">${esc(s.stderr)}</pre>`;
+    }
+    h+=`</div>`;
+  });
+
+  if(paused){
+    const nextType=(DEF.steps.find(x=>x.name===bp.next_step)||{}).type;
+    const hint=(COMPONENTS[nextType]&&COMPONENTS[nextType].fields||[]).map(f=>`{context…} → <code>${esc(f.name)}</code>`).join(' · ');
+    h+=`<div class="mt-2 p-2" style="background:var(--ui-surface-soft);border-radius:.6rem">
+      <div class="fld-label">Next: <b>${esc(bp.next_step||'—')}</b>${nextType?` <span style="color:var(--bs-tertiary-color)">[${esc(nextType)}]</span>`:''}</div>
+      ${hint?`<div class="fld-help mb-1">consumes: ${hint}</div>`:''}
+      <label class="fld-label">Inject data (merged into the bag)</label>
+      <textarea id="patchBox" class="form-control form-control-sm code" rows="3" placeholder='{"context":{"key":"value"}}'></textarea>
+      <details class="mt-1"><summary class="small" style="color:var(--bs-tertiary-color)">current data (bag)</summary><pre class="io bag-view">${esc(JSON.stringify(bp.bag,null,2))}</pre></details>
+      <div class="d-flex gap-1 mt-2">
+        <button class="btn btn-sm btn-warning" onclick="debugAct('step')"><i class="bi bi-skip-end"></i> Step</button>
+        <button class="btn btn-sm btn-success" onclick="debugAct('end')"><i class="bi bi-play-fill"></i> Continue</button>
+        <button class="btn btn-sm btn-outline-danger ms-auto" onclick="debugAct('abort')"><i class="bi bi-x-lg"></i> Abort</button>
+      </div></div>`;
+  } else if(bp.output!=null){
+    h+=`<div class="small mt-2" style="color:var(--bs-tertiary-color)">final output</div><pre class="io">${esc(JSON.stringify(bp.output,null,2))}</pre>`;
+  }
+  if(bp.error) h+=`<div class="st-failed small mt-1">${esc(bp.error)}</div>`;
+  $('#runbox').innerHTML=h;
+}
+
+// ---- boot ----
+$('#inst') && ($('#inst').onchange=()=>{ CURRENT=null; DEF=null; $('#builder').innerHTML=''; $('#runbox').innerHTML=''; loadList(); });
+<?php if ($instances): ?>loadList();<?php endif; ?>
 </script>
 </body>
 </html>

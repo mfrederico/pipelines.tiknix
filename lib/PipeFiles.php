@@ -31,23 +31,52 @@ class PipeFiles {
      * the instance and records history in the instance's DB.
      */
     public static function triggerRun(string $instanceDir, string $slug, array $context = []): array {
+        [$d, $code, $err] = self::post($instanceDir, '/pipeline/trigger/' . rawurlencode($slug), $context, 20);
+        if ($err) return ['error' => $err];
+        if ($code === 200 && !empty($d['run_id'])) return ['run_id' => (int) $d['run_id']];
+        return ['error' => $d['message'] ?? "trigger failed (HTTP $code)"];
+    }
+
+    /**
+     * Start a step-trace debug run on the instance. Returns the breakpoint payload
+     * (run_id, status, steps[], bag, last/next step) or ['error'=>string]. Debugging
+     * runs SYNCHRONOUSLY on the instance (the request blocks per step), so the
+     * connection/db_query/agent steps hit the instance's own real data.
+     */
+    public static function debugStart(string $instanceDir, string $slug, array $context = []): array {
+        [$d, $code, $err] = self::post($instanceDir, '/pipeline/debug/' . rawurlencode($slug), $context, 620);
+        if ($err) return ['error' => $err];
+        if ($code === 200 && isset($d['run_id'])) return $d;
+        return ['error' => $d['message'] ?? "debug start failed (HTTP $code)"];
+    }
+
+    /** Advance ('step'), finish ('end'), or 'abort' a debug run; $patch is merged into the bag. */
+    public static function debugStep(string $instanceDir, int $runId, string $action, array $patch = []): array {
+        [$d, $code, $err] = self::post($instanceDir, '/pipeline/debugstep/' . $runId, ['action' => $action, 'patch' => (object) $patch], 620);
+        if ($err) return ['error' => $err];
+        if ($code === 200 && isset($d['run_id'])) return $d;
+        return ['error' => $d['message'] ?? "debug step failed (HTTP $code)"];
+    }
+
+    /** POST JSON to an instance endpoint with the trigger_secret bearer. Returns [decoded, httpCode, errString]. */
+    private static function post(string $instanceDir, string $path, array $body, int $timeout): array {
         $cfg = self::cfg($instanceDir);
         $base   = rtrim((string) ($cfg['app']['baseurl'] ?? ''), '/');
         $secret = (string) ($cfg['pipeline']['trigger_secret'] ?? '');
-        if ($base === '' || $secret === '') return ['error' => 'This instance has no [pipeline] trigger_secret configured.'];
+        if ($base === '' || $secret === '') return [null, 0, 'This instance has no [pipeline] trigger_secret configured.'];
 
-        $ch = curl_init($base . '/pipeline/trigger/' . rawurlencode($slug));
+        $ch = curl_init($base . $path);
         curl_setopt_array($ch, [
-            CURLOPT_POST => true, CURLOPT_POSTFIELDS => json_encode($context) ?: '{}',
-            CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 20,
+            CURLOPT_POST => true, CURLOPT_POSTFIELDS => json_encode($body) ?: '{}',
+            CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => $timeout,
             CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'Authorization: Bearer ' . $secret],
         ]);
         $resp = curl_exec($ch);
         $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $cerr = curl_error($ch);
         curl_close($ch);
-        $d = is_string($resp) ? json_decode($resp, true) : null;
-        if ($code === 200 && !empty($d['run_id'])) return ['run_id' => (int) $d['run_id']];
-        return ['error' => $d['message'] ?? "trigger failed (HTTP $code)"];
+        if ($resp === false) return [null, 0, $cerr ?: 'request failed'];
+        return [is_string($resp) ? json_decode($resp, true) : null, $code, ''];
     }
 
     /** Read-only PDO to the instance's sqlite DB (for run polling), or null. */
