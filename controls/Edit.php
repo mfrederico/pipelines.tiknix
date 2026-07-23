@@ -25,8 +25,14 @@ class Edit extends Control {
         $s = Sso::session();
         if (!$s) { $this->requireLaunch(); return; }
         $access = new Access(Kernel::coreDb());
+        // Attach each instance's public base URL so the editor can show the real
+        // REST endpoint (<base>/pipeline/api/<slug>) for expose_as_api pipelines.
+        $instances = array_map(function (array $i) {
+            $i['api_base'] = PipeFiles::baseUrl(PipeFiles::instanceDir($i));
+            return $i;
+        }, $access->instances((int) $s['member_id']));
         $this->render('edit/index', [
-            'instances'  => $access->instances((int) $s['member_id']),
+            'instances'  => $instances,
             'email'      => $s['email'],
             'components' => StepRegistry::components(),
         ], false);

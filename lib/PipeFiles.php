@@ -25,6 +25,11 @@ class PipeFiles {
         return @parse_ini_file($instanceDir . '/conf/config.ini', true) ?: [];
     }
 
+    /** The instance's public base URL (host that serves /pipeline/api/<slug>). */
+    public static function baseUrl(string $instanceDir): string {
+        return rtrim((string) (self::cfg($instanceDir)['app']['baseurl'] ?? ''), '/');
+    }
+
     /**
      * Fire a run on the instance via its trigger endpoint (bearer = the instance's
      * trigger_secret). Returns ['run_id'=>int]|['error'=>string]. The run executes on

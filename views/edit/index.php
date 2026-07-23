@@ -79,7 +79,7 @@ $dsFile   = $coreRoot . '/views/components/design-system.php';
         <label class="ui-eyebrow d-block mb-1" for="inst">Instance</label>
         <select id="inst" class="form-select form-select-sm">
           <?php foreach ($instances as $i): ?>
-            <option value="<?= $h($i['slug']) ?>"><?= $h($i['name']) ?> (<?= $h($i['slug']) ?>)<?= $i['owned'] ? '' : ' · team' ?></option>
+            <option value="<?= $h($i['slug']) ?>" data-api-base="<?= $h($i['api_base'] ?? '') ?>"><?= $h($i['name']) ?> (<?= $h($i['slug']) ?>)<?= $i['owned'] ? '' : ' · team' ?></option>
           <?php endforeach; ?>
         </select>
       </div>
@@ -147,6 +147,10 @@ const TYPES = Object.keys(COMPONENTS);
 const PUBLIC_TYPES = TYPES.filter(t => !COMPONENTS[t].internal);   // internal steps (e.g. housekeep) are runtime plumbing — kept out of the palette
 const $ = s => document.querySelector(s);
 const inst = () => $('#inst') ? $('#inst').value : '';
+// Public base URL of the selected instance (host that serves /pipeline/api/<slug>).
+const instApiBase = () => { const s=$('#inst'); const o=s&&s.selectedOptions&&s.selectedOptions[0]; return (o&&o.getAttribute('data-api-base'))||''; };
+function copyText(t,btn){ const done=()=>{ if(btn){ const i=btn.querySelector('i'); if(i){ const p=i.className; i.className='bi bi-check2'; setTimeout(()=>i.className=p,1200);} } };
+  if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(t).then(done).catch(()=>window.prompt('Copy:',t)); } else { window.prompt('Copy:',t); } }
 let DEF = null, CURRENT = null, watchTimer = null, DEBUG = null, OPEN = null, sortable = null, UIDSEQ = 1, schedForceCustom = false, CONNECTORS = [];
 
 // ---- theme toggle (shares the tiknix 'ui-theme' key) ----
@@ -225,6 +229,7 @@ function renderBuilder(){
         <div class="col-6 d-flex align-items-center gap-2 pt-2">
           <div class="form-check form-switch"><input class="form-check-input" type="checkbox" data-meta="expose_as_api" ${DEF.expose_as_api?'checked':''}><label class="form-check-label small">Expose as REST API</label></div>
         </div>
+        ${DEF.expose_as_api?apiEndpointInfo():''}
         <div class="col-12 d-flex align-items-center gap-2">
           <div class="form-check form-switch"><input class="form-check-input" type="checkbox" data-meta="stateful" ${DEF.stateful?'checked':''}><label class="form-check-label small"><b>Durable object</b> — keep state across messages, addressed by id, with alarms</label></div>
         </div>
@@ -261,6 +266,28 @@ function durableInfo(){
     <div class="fld-label mb-1"><i class="bi bi-box"></i> Durable object handler (onMessage / onAlarm)</div>
     <div class="small mono">{state.*} · {message.*} · {trigger} <span style="color:var(--bs-tertiary-color)">(message|alarm)</span> · {object.key}</div>
     <div class="fld-help mt-1">The last step's output object <b>merges into state</b>. Control keys: <code>__alarm</code> ("+5 minutes" | null) arms/clears an alarm; <code>__destroy</code>: true deletes the object. Reach it at <span class="mono">POST /pipeline/object/&lt;slug&gt;?key=&lt;id&gt;</span>.</div>
+  </div></div>`;
+}
+
+// The live REST endpoint for an expose_as_api pipeline — shown under the switch so
+// there's no guessing what URL to call. Uses the selected instance's own base URL.
+function apiEndpointInfo(){
+  const base = instApiBase();
+  const slug = (DEF && DEF.slug) ? DEF.slug : 'my-pipeline';
+  const path = '/pipeline/api/' + slug;
+  const url  = (base ? base : '') + path;
+  return `<div class="col-12"><div class="p-2" style="background:var(--ui-surface-soft);border-radius:.6rem">
+    <div class="fld-label mb-1"><i class="bi bi-hdd-network"></i> REST endpoint</div>
+    <div class="d-flex align-items-center gap-2">
+      <span class="ui-chip" style="padding:.05rem .4rem;font-size:.7rem">POST</span>
+      <code class="mono text-truncate" style="flex:1" title="${esc(url)}">${esc(url)}</code>
+      <button class="btn btn-sm btn-outline-secondary py-0 px-1" title="Copy endpoint" onclick="copyText('${esc(url)}',this)"><i class="bi bi-clipboard"></i></button>
+    </div>
+    <div class="fld-help mt-1">
+      Authenticate with a per-member key: <span class="mono">Authorization: Bearer pk_…</span> (mint one at <span class="mono">${esc((base||'')+'/pipeline/keys')}</span>).
+      Body is the context JSON. Runs synchronously; append <span class="mono">?async=1</span> to get a <span class="mono">run_id</span> + <span class="mono">status_url</span> you poll at <span class="mono">GET /pipeline/status/&lt;run_id&gt;</span>.
+      ${base?'':'<span class="text-warning">This instance has no <span class="mono">[app] baseurl</span> set, so only the path is shown.</span>'}
+    </div>
   </div></div>`;
 }
 
@@ -510,7 +537,8 @@ function onBuilderChange(e){
   const meta=t.getAttribute('data-meta'), si=t.getAttribute('data-si'), field=t.getAttribute('data-field'), flow=t.getAttribute('data-flow'), conn=t.getAttribute('data-conn');
   if(meta && si===null){   // top-level meta
     if(meta==='stateful'){ DEF.stateful=t.checked; renderBuilder(); return; }
-    if(meta==='expose_as_tool'||meta==='expose_as_api'){ DEF[meta]=t.checked; }
+    if(meta==='expose_as_api'){ DEF.expose_as_api=t.checked; syncJson(); renderBuilder(); return; }
+    if(meta==='expose_as_tool'){ DEF[meta]=t.checked; }
     else if(meta==='cron'){ DEF.trigger=DEF.trigger||{}; DEF.trigger.cron=t.value; }
     else { DEF[meta]=t.value; }
     syncJson(); return;
