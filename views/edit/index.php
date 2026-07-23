@@ -157,7 +157,7 @@ const COMPONENTS = <?= json_encode($components, JSON_UNESCAPED_SLASHES) ?> || {}
 const TYPES = Object.keys(COMPONENTS);
 const $ = s => document.querySelector(s);
 const inst = () => $('#inst') ? $('#inst').value : '';
-let DEF = null, CURRENT = null, watchTimer = null, DEBUG = null, OPEN = null, sortable = null, UIDSEQ = 1, schedForceCustom = false;
+let DEF = null, CURRENT = null, watchTimer = null, DEBUG = null, OPEN = null, sortable = null, UIDSEQ = 1, schedForceCustom = false, CONNECTORS = [];
 
 // ---- theme toggle (shares the tiknix 'ui-theme' key) ----
 $('#themeToggle') && ($('#themeToggle').onclick = () => {
@@ -204,6 +204,10 @@ async function openPipeline(slug){
   }catch(e){ msg(e.message,'danger'); }
 }
 function newPipeline(){ DEF=normalize(TEMPLATE()); CURRENT=null; DEBUG=null; OPEN=null; schedForceCustom=false; $('#runbox').innerHTML=''; msg('New pipeline — edit + Save.','info'); renderBuilder(); loadList(); }
+
+// the instance's connected connectors (for the connection step's dropdown; no secrets)
+async function loadConnectors(){ try{ const d=await jget('/edit/connectors?inst='+encodeURIComponent(inst())); CONNECTORS=d.connectors||[]; }catch(e){ CONNECTORS=[]; } if(DEF) renderBuilder(); }
+function connStyle(type){ const c=CONNECTORS.find(x=>x.connector===type); return c?c.style:(type==='shopify'?'graphql':'rest'); }
 
 function normalize(def){
   def=def||{}; def.steps=Array.isArray(def.steps)?def.steps:[];
@@ -357,7 +361,7 @@ function flowOptions(step,i,which){
 function summarize(step){
   const c=step.config||{}, t=step.type;
   if(t==='branch') return `${c.left||''} ${c.op||''} ${c.right??''}`.trim();
-  if(t==='connection') return `${c.connector||'?'}.${c.tool||'?'}`;
+  if(t==='connection'){ const a=c.arguments||{}; if(!c.connector) return ''; return c.tool==='graphql' ? `${c.connector} · graphql` : `${c.connector} · ${(a.method||'GET')} ${a.path||''}`.trim(); }
   if(t==='http') return `${c.method||'GET'} ${c.url||''}`.trim();
   if(t==='transform') return `${c.mode||''}${c.input!=null?': '+trunc(c.input):''}`;
   const comp=COMPONENTS[t]||{fields:[]};
@@ -368,7 +372,9 @@ function summarize(step){
 function renderRow(step,i){
   const comp=COMPONENTS[step.type]||{fields:[]};
   const open=step.__uid===OPEN;
-  const fields=(comp.fields||[]).map(f=>renderField(f,step.config[f.name],i)).join('');
+  const cardBody = step.type==='connection'
+    ? renderConnCard(step,i)
+    : '<div class="row g-2">'+(comp.fields||[]).map(f=>renderField(f,step.config[f.name],i)).join('')+'</div>';
   const typeOpts=TYPES.map(t=>`<option value="${t}" ${t===step.type?'selected':''}>${t}</option>`).join('');
   const sum=summarize(step);
   return `<div class="ss-row-wrap ${open?'open':''}" data-uid="${step.__uid}">
@@ -382,7 +388,50 @@ function renderRow(step,i){
       <button class="ui-btn-icon no-toggle" style="width:26px;height:26px" title="Delete step" onclick="removeStep(${i})"><i class="bi bi-x-lg"></i></button>
     </div>
     <div class="ss-summary">${sum?esc(sum):'<span style="opacity:.55">— click to configure —</span>'}</div>
-    <div class="ss-card" ${open?'':'hidden'}><div class="row g-2">${fields}</div></div>
+    <div class="ss-card" ${open?'':'hidden'}>${cardBody}</div>
+  </div>`;
+}
+
+// The connection step's Postman-style card: pick a connector (keys hidden), then an
+// adaptive request form — Shopify → GraphQL query + variables; REST → method/path/body.
+function renderConnCard(step,i){
+  const c=step.config||{};
+  if(!CONNECTORS.length){
+    return `<div class="small" style="color:var(--bs-tertiary-color)">No connectors on this instance. Connect a store/account in tiknix (Connections), or use the <code>http</code> step for a plain call.</div>`;
+  }
+  const cur = (c.connector!=null) ? (c.connector+'|'+(c.environment||'')) : '';
+  const opts = `<option value="">— pick a connector —</option>` + CONNECTORS.map(x=>{
+    const v=x.connector+'|'+x.environment;
+    return `<option value="${esc(v)}" ${v===cur?'selected':''}>${esc(x.name)} · ${esc(x.connector)} (${esc(x.environment)})</option>`;
+  }).join('');
+  let form='';
+  if(c.connector){
+    const style = c.tool==='graphql' ? 'graphql' : (c.tool==='request' ? 'rest' : connStyle(c.connector));
+    const a=c.arguments||{};
+    if(style==='graphql'){
+      form=`
+        <div class="col-12"><div class="fld-label">GraphQL query <span class="req">*</span></div>
+          <textarea class="form-control form-control-sm code" rows="5" data-si="${i}" data-conn="query" placeholder="query($ids:[ID!]!){ nodes(ids:$ids){ id } }">${esc(a.query||'')}</textarea>
+          <div class="fld-help">Runs against the connected store's Admin GraphQL API — host, version & auth injected server-side.</div></div>
+        <div class="col-12"><div class="fld-label">Variables</div>
+          <textarea class="form-control form-control-sm code" rows="2" data-si="${i}" data-conn="variables" placeholder='{"ids":"{context.item_ids}"}'>${esc(a.variables&&Object.keys(a.variables).length?JSON.stringify(a.variables):'')}</textarea>
+          <div class="fld-help">JSON object → GraphQL variables. Values may reference {context.x}.</div></div>`;
+    } else {
+      const methods=['GET','POST','PUT','PATCH','DELETE'];
+      form=`
+        <div class="col-4"><div class="fld-label">Method</div>
+          <select class="form-select form-select-sm" data-si="${i}" data-conn="method">${methods.map(m=>`<option ${((a.method||'GET')===m)?'selected':''}>${m}</option>`).join('')}</select></div>
+        <div class="col-8"><div class="fld-label">Path <span class="req">*</span></div>
+          <input class="form-control form-control-sm mono" data-si="${i}" data-conn="path" placeholder="/v1/charges" value="${esc(a.path||'')}"></div>
+        <div class="col-12"><div class="fld-label">Body</div>
+          <textarea class="form-control form-control-sm code" rows="3" data-si="${i}" data-conn="body" placeholder='{"amount":"{context.amount}","currency":"usd"}'>${esc(a.body&&Object.keys(a.body).length?JSON.stringify(a.body,null,0):'')}</textarea>
+          <div class="fld-help">JSON params — form-encoded for writes, query-string for GET. Values may reference {context.x}.</div></div>`;
+    }
+  }
+  return `<div class="row g-2">
+    <div class="col-12"><div class="fld-label">Connector <span class="req">*</span></div>
+      <select class="form-select form-select-sm" data-si="${i}" data-conn="connector">${opts}</select></div>
+    ${form}
   </div>`;
 }
 
@@ -436,7 +485,7 @@ $('#builder') && $('#builder').addEventListener('click', e=>{
 });
 function onBuilderChange(e){
   const t=e.target; if(!DEF) return;
-  const meta=t.getAttribute('data-meta'), si=t.getAttribute('data-si'), field=t.getAttribute('data-field'), flow=t.getAttribute('data-flow');
+  const meta=t.getAttribute('data-meta'), si=t.getAttribute('data-si'), field=t.getAttribute('data-field'), flow=t.getAttribute('data-flow'), conn=t.getAttribute('data-conn');
   if(meta && si===null){   // top-level meta
     if(meta==='expose_as_tool'||meta==='expose_as_api'){ DEF[meta]=t.checked; }
     else if(meta==='cron'){ DEF.trigger=DEF.trigger||{}; DEF.trigger.cron=t.value; }
@@ -447,7 +496,27 @@ function onBuilderChange(e){
   if(meta==='name'){ DEF.steps[i].name=t.value; syncJson(); if(e.type==='change') rerenderFlows(); return; }
   if(meta==='type'){ DEF.steps[i].type=t.value; DEF.steps[i].config={}; OPEN=DEF.steps[i].__uid; renderBuilder(); return; }
   if(flow){ DEF.steps[i][flow]=t.value; syncJson(); return; }
+  if(conn){ setConnField(i,conn,t); return; }
   if(field){ setStepField(i,field,t); refreshSummary(i); syncJson(); return; }
+}
+function setConnField(i,key,el){
+  const step=DEF.steps[i]; step.config=step.config||{};
+  if(key==='connector'){
+    const [type,env]=(el.value||'').split('|');
+    const typeChanged = type !== step.config.connector;   // env-only change keeps the request
+    if(!type){ delete step.config.connector; delete step.config.environment; delete step.config.tool; step.config.arguments={}; }
+    else { step.config.connector=type; step.config.environment=env||'';
+      step.config.tool = connStyle(type)==='graphql' ? 'graphql' : 'request';
+      if(typeChanged || !step.config.arguments) step.config.arguments={};   // reset the shape on a type switch
+      if(step.config.tool==='request' && step.config.arguments.method==null) step.config.arguments.method='GET'; }
+    OPEN=step.__uid; renderBuilder(); return;   // switch the adaptive form
+  }
+  const a = step.config.arguments = step.config.arguments||{};
+  if(key==='query'){ if(el.value) a.query=el.value; else delete a.query; }
+  else if(key==='method'){ a.method=el.value; }
+  else if(key==='path'){ if(el.value) a.path=el.value; else delete a.path; }
+  else if(key==='variables'||key==='body'){ const v=el.value.trim(); if(!v){ delete a[key]; el.classList.remove('is-invalid'); } else { try{ a[key]=JSON.parse(v); el.classList.remove('is-invalid'); }catch(_){ el.classList.add('is-invalid'); } } }
+  refreshSummary(i); syncJson();
 }
 function setStepField(i,name,el){
   const ftype=el.getAttribute('data-ftype'); const cfg=DEF.steps[i].config;
@@ -569,8 +638,8 @@ function renderDebug(bp){
 }
 
 // ---- boot ----
-$('#inst') && ($('#inst').onchange=()=>{ CURRENT=null; DEF=null; OPEN=null; $('#builder').innerHTML=''; $('#runbox').innerHTML=''; loadList(); });
-<?php if ($instances): ?>loadList();<?php endif; ?>
+$('#inst') && ($('#inst').onchange=()=>{ CURRENT=null; DEF=null; OPEN=null; CONNECTORS=[]; $('#builder').innerHTML=''; $('#runbox').innerHTML=''; loadList(); loadConnectors(); });
+<?php if ($instances): ?>loadList(); loadConnectors();<?php endif; ?>
 </script>
 </body>
 </html>

@@ -46,6 +46,35 @@ class Edit extends Control {
         Flight::json(['pipelines' => $out]);
     }
 
+    /** GET /edit/connectors?inst=<slug> — the instance's connected connectors (NO secrets). */
+    public function connectors($params = []) {
+        [$s, $inst] = $this->guard();
+        if (!$inst) return;
+        $out = [];
+        $core = Kernel::coreDb();
+        if ($core) {
+            try {
+                $st = $core->prepare("SELECT connector_type, environment, external_name FROM connections
+                    WHERE instance_id = ? AND enabled = 1 AND (revoked_at IS NULL OR revoked_at = '')
+                    ORDER BY connector_type, environment");
+                $st->execute([(int) $inst['id']]);
+                foreach ($st->fetchAll(\PDO::FETCH_ASSOC) as $r) {
+                    $type  = (string) $r['connector_type'];
+                    $style = self::connectorStyle($type);
+                    $out[] = ['connector' => $type, 'environment' => (string) $r['environment'],
+                        'name' => (string) ($r['external_name'] ?: $type), 'style' => $style,
+                        'tool' => $style === 'graphql' ? 'graphql' : 'request'];
+                }
+            } catch (\Throwable $e) { /* connections table may be absent on some cores */ }
+        }
+        Flight::json(['connectors' => $out]);
+    }
+
+    /** How a connector's pipeline request is shaped: GraphQL (Shopify) vs REST (default). */
+    private static function connectorStyle(string $type): string {
+        return $type === 'shopify' ? 'graphql' : 'rest';
+    }
+
     /** GET /edit/get?inst=<slug>&slug=<pipe> — one pipeline definition (pretty JSON). */
     public function get($params = []) {
         [$s, $inst] = $this->guard();
