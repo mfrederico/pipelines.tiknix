@@ -1,8 +1,10 @@
 <?php
 /**
- * Pipeline Editor — visual step-card builder + step-trace debugger, in the tiknix
- * design system (fonts + --ui-* tokens pulled from core). No hand-authored JSON:
- * the JSON is the on-disk format only, behind an "Advanced" toggle.
+ * Pipeline Editor — spreadsheet step builder + step-trace debugger, in the tiknix
+ * design system (fonts + --ui-* tokens pulled from core). A dense row-per-step grid
+ * (drag to reorder; name/type/flow editable inline); click a row to reveal its full
+ * config card inline. No hand-authored JSON — it's the on-disk format only, behind an
+ * "Advanced" toggle.
  *
  * @var array  $instances  accessible instances [{slug,name,owned,app}]
  * @var string $email      signed-in member email
@@ -29,16 +31,28 @@ $dsFile   = $coreRoot . '/views/components/design-system.php';
   .pe-list .item:hover{border-color:var(--ui-primary);}
   .pe-list .item.active{border-color:var(--ui-primary);box-shadow:0 0 0 1px var(--ui-primary) inset;}
   .pe-list .item .nm{font-weight:600;font-family:var(--ui-ff-display);}
-  .step-card{background:var(--ui-surface);border:1px solid var(--bs-border-color);border-radius:1rem;box-shadow:var(--ui-shadow);margin-bottom:.85rem;overflow:hidden;}
-  .step-card .sc-head{display:flex;align-items:center;gap:.5rem;padding:.6rem .8rem;background:var(--ui-surface-soft);border-bottom:1px solid var(--bs-border-color);}
-  .step-card .sc-idx{width:1.7rem;height:1.7rem;border-radius:50%;display:grid;place-items:center;background:var(--ui-primary);color:#fff;font-family:var(--ui-ff-mono);font-size:.8rem;font-weight:600;flex:0 0 auto;}
-  .step-card .sc-body{padding:.75rem .8rem;}
-  .step-card .sc-flow{display:flex;gap:.75rem;flex-wrap:wrap;padding:.4rem .8rem .7rem;}
+
+  /* spreadsheet step grid */
+  .ss{border:1px solid var(--bs-border-color);border-radius:.9rem;overflow:hidden;background:var(--ui-surface);box-shadow:var(--ui-shadow);}
+  .ss-cols{grid-template-columns:20px 26px minmax(6rem,1fr) 7.5rem 8.5rem 8.5rem 28px;}
+  .ss-head,.ss-row{display:grid;gap:.4rem;align-items:center;padding:.3rem .55rem;}
+  .ss-head{background:var(--ui-surface-soft);border-bottom:1px solid var(--bs-border-color);font-family:var(--ui-ff-mono);font-size:.62rem;letter-spacing:.14em;text-transform:uppercase;color:var(--bs-tertiary-color);}
+  .ss-row-wrap{border-bottom:1px solid var(--bs-border-color);transition:background .1s;}
+  .ss-row-wrap:last-child{border-bottom:none;}
+  .ss-row-wrap:hover{background:var(--ui-surface-soft);}
+  .ss-row-wrap.open{background:var(--ui-surface-soft);}
+  .ss-row-wrap.dbg-cur{box-shadow:inset 3px 0 0 var(--ui-accent-report);}
+  .ss-ghost{opacity:.35;}
+  .ss-row .drag{cursor:grab;color:var(--bs-tertiary-color);text-align:center;}
+  .ss-row .drag:active{cursor:grabbing;}
+  .ss-row .idx{width:22px;height:22px;border-radius:50%;background:var(--ui-primary);color:#fff;display:grid;place-items:center;font-family:var(--ui-ff-mono);font-size:.72rem;font-weight:600;}
+  .ss-summary{font-family:var(--ui-ff-mono);font-size:11px;color:var(--bs-tertiary-color);padding:0 .55rem .3rem 3rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .ss-card{padding:.65rem .8rem .85rem;border-top:1px dashed var(--bs-border-color);}
   .fld-help{font-size:.76rem;color:var(--bs-tertiary-color);}
   .fld-label{font-size:.78rem;font-weight:600;color:var(--bs-secondary-color);margin-bottom:.15rem;}
-  .fld-label .req{color:var(--ui-accent-report);}
-  .mono, #jsonBox, .bag-view{font-family:var(--ui-ff-mono);font-size:12.5px;}
-  .st-completed{color:#3bbf7a}.st-failed{color:#e0559b}.st-running,.st-awaiting{color:#e0a23b}.st-pending{color:var(--bs-tertiary-color)}
+  .fld-label .req,.req{color:var(--ui-accent-report);}
+  .mono,#jsonBox,.bag-view{font-family:var(--ui-ff-mono);font-size:12.5px;}
+  .st-completed{color:#3bbf7a}.st-failed{color:#e0559b}.st-running,.st-awaiting{color:#e0a23b}.st-pending,.st-paused{color:var(--bs-tertiary-color)}
   .trace-step{border:1px solid var(--bs-border-color);border-radius:.6rem;padding:.45rem .6rem;margin-bottom:.4rem;font-size:.85rem;}
   .trace-step.cur{border-color:var(--ui-primary);box-shadow:0 0 0 1px var(--ui-primary) inset;}
   pre.io{background:var(--ui-surface-inset);border-radius:.5rem;padding:.5rem;margin:.35rem 0 0;font-size:11.5px;max-height:26vh;overflow:auto;white-space:pre-wrap;word-break:break-word;}
@@ -136,13 +150,14 @@ $dsFile   = $coreRoot . '/views/components/design-system.php';
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 <script>
 "use strict";
 const COMPONENTS = <?= json_encode($components, JSON_UNESCAPED_SLASHES) ?> || {};
 const TYPES = Object.keys(COMPONENTS);
 const $ = s => document.querySelector(s);
 const inst = () => $('#inst') ? $('#inst').value : '';
-let DEF = null, CURRENT = null, watchTimer = null, DEBUG = null;
+let DEF = null, CURRENT = null, watchTimer = null, DEBUG = null, OPEN = null, sortable = null, UIDSEQ = 1;
 
 // ---- theme toggle (shares the tiknix 'ui-theme' key) ----
 $('#themeToggle') && ($('#themeToggle').onclick = () => {
@@ -154,8 +169,10 @@ $('#themeToggle') && ($('#themeToggle').onclick = () => {
 // ---- helpers ----
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function msg(t,cls){ $('#msg').innerHTML = t ? `<span class="text-${cls}">${esc(t)}</span>` : ''; }
+function trunc(v){ const s = typeof v==='string' ? v : JSON.stringify(v); return s && s.length>52 ? s.slice(0,52)+'…' : (s||''); }
 async function jget(u){ const r=await fetch(u,{headers:{Accept:'application/json'}}); const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.message||('HTTP '+r.status)); return d; }
 async function jpost(u,b){ const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(b)}); const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.message||('HTTP '+r.status)); return d; }
+function uid(s){ Object.defineProperty(s,'__uid',{value:UIDSEQ++,enumerable:false,writable:true,configurable:true}); return s; }
 
 const TEMPLATE = () => ({
   slug:"my-pipeline", name:"My pipeline", description:"",
@@ -183,21 +200,21 @@ async function loadList(){
 }
 async function openPipeline(slug){
   try{ const d=await jget('/edit/get?inst='+encodeURIComponent(inst())+'&slug='+encodeURIComponent(slug));
-    DEF=normalize(d.def); CURRENT=slug; DEBUG=null; $('#runbox').innerHTML=''; msg('',''); renderBuilder(); loadList();
+    DEF=normalize(d.def); CURRENT=slug; DEBUG=null; OPEN=null; $('#runbox').innerHTML=''; msg('',''); renderBuilder(); loadList();
   }catch(e){ msg(e.message,'danger'); }
 }
-function newPipeline(){ DEF=normalize(TEMPLATE()); CURRENT=null; DEBUG=null; $('#runbox').innerHTML=''; msg('New pipeline — edit + Save.','info'); renderBuilder(); loadList(); }
+function newPipeline(){ DEF=normalize(TEMPLATE()); CURRENT=null; DEBUG=null; OPEN=null; $('#runbox').innerHTML=''; msg('New pipeline — edit + Save.','info'); renderBuilder(); loadList(); }
 
 function normalize(def){
   def=def||{}; def.steps=Array.isArray(def.steps)?def.steps:[];
-  def.steps.forEach(s=>{ s.config=s.config||{}; s.on_success=s.on_success||'next'; s.on_fail=s.on_fail||'exit'; });
+  def.steps.forEach(s=>{ s.config=s.config||{}; s.on_success=s.on_success||'next'; s.on_fail=s.on_fail||'exit'; if(s.__uid===undefined) uid(s); });
   def.context_schema=def.context_schema||{}; def.trigger=def.trigger||{};
   return def;
 }
 
 // ---- builder render ----
 function renderBuilder(){
-  if(!DEF){ return; }
+  if(!DEF) return;
   const settings = `
     <div class="ui-panel mb-3"><div class="ui-panel-body">
       <div class="row g-2">
@@ -220,49 +237,64 @@ function renderBuilder(){
       </div>
     </div></div>`;
 
-  const cards = DEF.steps.map((s,i)=>renderStep(s,i)).join('');
+  const rows = DEF.steps.map((s,i)=>renderRow(s,i)).join('') ||
+    '<div class="p-3 small" style="color:var(--bs-tertiary-color)">No steps yet — add one below.</div>';
+  const grid = `
+    <div class="ss">
+      <div class="ss-head ss-cols"><span></span><span>#</span><span>Name</span><span>Type</span><span>→ ok</span><span>→ fail</span><span></span></div>
+      <div id="steps">${rows}</div>
+    </div>`;
+
   const addMenu = `
-    <div class="dropdown">
+    <div class="dropdown mt-2">
       <button class="btn btn-outline-primary w-100" data-bs-toggle="dropdown"><i class="bi bi-plus-lg"></i> Add step</button>
       <ul class="dropdown-menu type-menu w-100">
         ${TYPES.map(t=>`<li><a class="dropdown-item" href="#" onclick="addStep('${t}');return false"><span class="t">${esc(t)}</span><div class="small" style="color:var(--bs-tertiary-color)">${esc(COMPONENTS[t].summary||'')}</div></a></li>`).join('')}
       </ul>
     </div>`;
 
-  $('#builder').innerHTML = settings + `<div id="cards">${cards}</div>` + addMenu;
-  renderCtxRows();
-  syncJson();
+  $('#builder').innerHTML = settings + grid + addMenu;
+  initSortable(); renderCtxRows(); syncJson();
 }
 
-function flowSelect(step,i,which){
+function flowOptions(step,i,which){
   const others=DEF.steps.filter((_,k)=>k!==i).map(s=>s.name);
   const val=step[which]|| (which==='on_success'?'next':'exit');
   const opts=['next','exit',...others.map(n=>'goto:'+n)];
-  if(val.startsWith('goto:') && !others.includes(val.slice(5))) opts.push(val); // keep dangling goto visible
-  return `<div><span class="fld-label">${which==='on_success'?'on success →':'on fail →'}</span>
-    <select class="form-select form-select-sm" data-si="${i}" data-flow="${which}" style="width:auto;display:inline-block">
-      ${opts.map(o=>`<option value="${esc(o)}" ${o===val?'selected':''}>${esc(o)}</option>`).join('')}
-    </select></div>`;
+  if(String(val).startsWith('goto:') && !others.includes(String(val).slice(5))) opts.push(val);
+  return `<select class="form-select form-select-sm no-toggle" data-si="${i}" data-flow="${which}">
+    ${opts.map(o=>`<option value="${esc(o)}" ${o===val?'selected':''}>${esc(o)}</option>`).join('')}</select>`;
 }
 
-function renderStep(step,i){
+function summarize(step){
+  const c=step.config||{}, t=step.type;
+  if(t==='branch') return `${c.left||''} ${c.op||''} ${c.right??''}`.trim();
+  if(t==='connection') return `${c.connector||'?'}.${c.tool||'?'}`;
+  if(t==='http') return `${c.method||'GET'} ${c.url||''}`.trim();
+  if(t==='transform') return `${c.mode||''}${c.input!=null?': '+trunc(c.input):''}`;
+  const comp=COMPONENTS[t]||{fields:[]};
+  for(const f of (comp.fields||[])){ if(c[f.name]!=null && c[f.name]!=='') return `${f.name}: ${trunc(c[f.name])}`; }
+  return '';
+}
+
+function renderRow(step,i){
   const comp=COMPONENTS[step.type]||{fields:[]};
+  const open=step.__uid===OPEN;
   const fields=(comp.fields||[]).map(f=>renderField(f,step.config[f.name],i)).join('');
   const typeOpts=TYPES.map(t=>`<option value="${t}" ${t===step.type?'selected':''}>${t}</option>`).join('');
-  return `<div class="step-card">
-    <div class="sc-head">
-      <span class="sc-idx">${i+1}</span>
-      <input class="form-control form-control-sm" style="max-width:12rem" data-si="${i}" data-meta="name" value="${esc(step.name||'')}">
-      <select class="form-select form-select-sm" style="width:auto" data-si="${i}" data-meta="type">${typeOpts}</select>
-      <span class="small ms-1" style="color:var(--bs-tertiary-color)">${esc(comp.summary||'')}</span>
-      <span class="ms-auto d-flex gap-1">
-        <button class="ui-btn-icon" style="width:30px;height:30px" title="Move up" onclick="moveStep(${i},-1)"><i class="bi bi-arrow-up"></i></button>
-        <button class="ui-btn-icon" style="width:30px;height:30px" title="Move down" onclick="moveStep(${i},1)"><i class="bi bi-arrow-down"></i></button>
-        <button class="ui-btn-icon" style="width:30px;height:30px" title="Delete" onclick="removeStep(${i})"><i class="bi bi-x-lg"></i></button>
-      </span>
+  const sum=summarize(step);
+  return `<div class="ss-row-wrap ${open?'open':''}" data-uid="${step.__uid}">
+    <div class="ss-row ss-cols">
+      <span class="drag" title="drag to reorder"><i class="bi bi-grip-vertical"></i></span>
+      <span class="idx">${i+1}</span>
+      <input class="form-control form-control-sm no-toggle" data-si="${i}" data-meta="name" value="${esc(step.name||'')}">
+      <select class="form-select form-select-sm no-toggle" data-si="${i}" data-meta="type">${typeOpts}</select>
+      ${flowOptions(step,i,'on_success')}
+      ${flowOptions(step,i,'on_fail')}
+      <button class="ui-btn-icon no-toggle" style="width:26px;height:26px" title="Delete step" onclick="removeStep(${i})"><i class="bi bi-x-lg"></i></button>
     </div>
-    <div class="sc-body"><div class="row g-2">${fields}</div></div>
-    <div class="sc-flow">${flowSelect(step,i,'on_success')}${flowSelect(step,i,'on_fail')}</div>
+    <div class="ss-summary">${sum?esc(sum):'<span style="opacity:.55">— click to configure —</span>'}</div>
+    <div class="ss-card" ${open?'':'hidden'}><div class="row g-2">${fields}</div></div>
   </div>`;
 }
 
@@ -271,8 +303,8 @@ function renderField(f,val,i){
   const lab=`<div class="fld-label">${esc(f.label||f.name)}${req}</div>`;
   const help=f.help?`<div class="fld-help">${esc(f.help)}</div>`:'';
   const da=`data-si="${i}" data-field="${f.name}" data-ftype="${f.type}"`;
-  let input='';
   const col = (f.type==='textarea'||f.type==='keyval'||f.type==='list') ? 'col-12' : 'col-6';
+  let input='';
   if(f.type==='textarea'){ input=`<textarea class="form-control form-control-sm code" rows="2" ${da}>${esc(val||'')}</textarea>`; }
   else if(f.type==='number'){ input=`<input type="number" class="form-control form-control-sm" ${da} value="${val==null?'':esc(val)}">`; }
   else if(f.type==='bool'){ return `<div class="col-6"><div class="form-check form-switch mt-3"><input class="form-check-input" type="checkbox" ${da} ${val?'checked':''}><label class="form-check-label fld-label">${esc(f.label||f.name)}</label></div>${help}</div>`; }
@@ -283,24 +315,51 @@ function renderField(f,val,i){
   return `<div class="${col}">${lab}${input}${help}</div>`;
 }
 
+// ---- drag reorder ----
+function initSortable(){
+  const el=document.getElementById('steps');
+  if(!el || typeof Sortable==='undefined') return;
+  if(sortable){ try{ sortable.destroy(); }catch(e){} }
+  sortable=Sortable.create(el,{ handle:'.drag', animation:150, ghostClass:'ss-ghost', draggable:'.ss-row-wrap',
+    onEnd:()=>{
+      const order=[...el.querySelectorAll('.ss-row-wrap')].map(w=>w.dataset.uid);
+      DEF.steps.sort((a,b)=>order.indexOf(String(a.__uid))-order.indexOf(String(b.__uid)));
+      renderBuilder();
+    } });
+}
+
+// ---- expand / collapse (accordion) ----
+function toggleRow(u){ OPEN = (OPEN===u)?null:u;
+  document.querySelectorAll('#steps .ss-row-wrap').forEach(w=>{
+    const on = String(OPEN)===w.dataset.uid;
+    w.classList.toggle('open',on);
+    const card=w.querySelector('.ss-card'); if(card) card.hidden=!on;
+  });
+}
+
 // ---- builder events (delegated) ----
 $('#builder') && $('#builder').addEventListener('input', onBuilderChange);
 $('#builder') && $('#builder').addEventListener('change', onBuilderChange);
+$('#builder') && $('#builder').addEventListener('click', e=>{
+  if(e.target.closest('.ss-card')) return;                                          // clicks inside an open card
+  if(e.target.closest('input,select,textarea,button,a,label,.no-toggle')) return;   // interactive controls
+  const wrap=e.target.closest('.ss-row-wrap'); if(!wrap) return;
+  toggleRow(parseInt(wrap.dataset.uid,10));
+});
 function onBuilderChange(e){
   const t=e.target; if(!DEF) return;
   const meta=t.getAttribute('data-meta'), si=t.getAttribute('data-si'), field=t.getAttribute('data-field'), flow=t.getAttribute('data-flow');
-  // top-level meta (no data-si)
-  if(meta && si===null){
+  if(meta && si===null){   // top-level meta
     if(meta==='expose_as_tool'||meta==='expose_as_api'){ DEF[meta]=t.checked; }
     else if(meta==='cron'){ DEF.trigger=DEF.trigger||{}; DEF.trigger.cron=t.value; }
     else { DEF[meta]=t.value; }
     syncJson(); return;
   }
   const i=parseInt(si,10); if(isNaN(i)||!DEF.steps[i]) return;
-  if(meta==='name'){ DEF.steps[i].name=t.value; syncJson(); rerenderFlows(); return; }
-  if(meta==='type'){ DEF.steps[i].type=t.value; DEF.steps[i].config={}; renderBuilder(); return; }
+  if(meta==='name'){ DEF.steps[i].name=t.value; syncJson(); if(e.type==='change') rerenderFlows(); return; }
+  if(meta==='type'){ DEF.steps[i].type=t.value; DEF.steps[i].config={}; OPEN=DEF.steps[i].__uid; renderBuilder(); return; }
   if(flow){ DEF.steps[i][flow]=t.value; syncJson(); return; }
-  if(field){ setStepField(i,field,t); syncJson(); return; }
+  if(field){ setStepField(i,field,t); refreshSummary(i); syncJson(); return; }
 }
 function setStepField(i,name,el){
   const ftype=el.getAttribute('data-ftype'); const cfg=DEF.steps[i].config;
@@ -310,21 +369,19 @@ function setStepField(i,name,el){
   if(ftype==='list'){ const arr=el.value.split('\n').map(s=>s.trim()).filter(Boolean); if(arr.length) cfg[name]=arr; else delete cfg[name]; return; }
   if(el.value==='') delete cfg[name]; else cfg[name]=el.value;
 }
-// re-render only the flow dropdowns (names changed) without losing focus mid-typing
-function rerenderFlows(){ DEF.steps.forEach((s,i)=>{ ['on_success','on_fail'].forEach(w=>{ const sel=document.querySelector(`select[data-si="${i}"][data-flow="${w}"]`); if(sel){ const wrap=sel.parentElement; wrap.outerHTML=flowSelect(s,i,w); } }); }); }
+function refreshSummary(i){ const w=document.querySelector(`#steps .ss-row-wrap[data-uid="${DEF.steps[i].__uid}"] .ss-summary`);
+  if(w){ const s=summarize(DEF.steps[i]); w.innerHTML = s?esc(s):'<span style="opacity:.55">— click to configure —</span>'; } }
+function rerenderFlows(){ DEF.steps.forEach((s,i)=>['on_success','on_fail'].forEach(w=>{ const sel=document.querySelector(`#steps select[data-si="${i}"][data-flow="${w}"]`); if(sel) sel.outerHTML=flowOptions(s,i,w); })); }
 
-function addStep(type){
-  const n=DEF.steps.length+1; DEF.steps.push({name:type+n, type:type, config:{}, on_success:'next', on_fail:'exit'}); renderBuilder();
-}
+function addStep(type){ const n=DEF.steps.length+1; const s=uid({name:type+n, type:type, config:{}, on_success:'next', on_fail:'exit'}); DEF.steps.push(s); OPEN=s.__uid; renderBuilder(); }
 function removeStep(i){ DEF.steps.splice(i,1); renderBuilder(); }
-function moveStep(i,d){ const j=i+d; if(j<0||j>=DEF.steps.length) return; const [s]=DEF.steps.splice(i,1); DEF.steps.splice(j,0,s); renderBuilder(); }
 
 // ---- context schema rows ----
 function renderCtxRows(){
   const host=$('#ctxRows'); if(!host) return; host.innerHTML='';
   Object.entries(DEF.context_schema||{}).forEach(([k,spec])=>{
     spec=spec||{}; const row=document.createElement('div'); row.className='d-flex gap-1 mb-1';
-    row.innerHTML=`<input class="form-control form-control-sm" value="${esc(k)}" data-ck="name" data-cold="${esc(k)}" placeholder="name">
+    row.innerHTML=`<input class="form-control form-control-sm" value="${esc(k)}" data-ck="name" placeholder="name">
       <select class="form-select form-select-sm" data-ck="type" style="max-width:6.5rem">
         ${['string','number','boolean','object'].map(t=>`<option ${((spec.type||'string')===t)?'selected':''}>${t}</option>`).join('')}</select>
       <div class="form-check form-switch d-flex align-items-center" title="required"><input class="form-check-input" type="checkbox" data-ck="required" ${spec.required?'checked':''}></div>
@@ -345,7 +402,7 @@ function delCtxVar(k){ delete DEF.context_schema[k]; renderCtxRows(); syncJson()
 // ---- JSON advanced ----
 function syncJson(){ const b=$('#jsonBox'); if(b) b.value=JSON.stringify(DEF,null,2); }
 function toggleJson(){ const w=$('#jsonWrap'); w.style.display = w.style.display==='none' ? 'block':'none'; }
-function applyJson(){ try{ DEF=normalize(JSON.parse($('#jsonBox').value)); renderBuilder(); msg('Applied JSON ✓','success'); }catch(e){ msg('Invalid JSON: '+e.message,'danger'); } }
+function applyJson(){ try{ DEF=normalize(JSON.parse($('#jsonBox').value)); OPEN=null; renderBuilder(); msg('Applied JSON ✓','success'); }catch(e){ msg('Invalid JSON: '+e.message,'danger'); } }
 
 // ---- validate / save / delete ----
 async function validateDef(){ if(!DEF) return;
@@ -384,9 +441,13 @@ async function debugAct(action){
   try{ const bp=await jpost('/edit/debugstep',{inst:inst(),run_id:DEBUG.run_id,action:action,patch:JSON.stringify(parsed)}); renderDebug(bp); }
   catch(e){ msg(e.message,'danger'); }
 }
+function highlightDebugRow(stepName){
+  document.querySelectorAll('#steps .ss-row-wrap').forEach(w=>{ const nm=w.querySelector('[data-meta="name"]'); w.classList.toggle('dbg-cur', !!stepName && nm && nm.value===stepName); });
+}
 function renderDebug(bp){
   DEBUG=bp;
   const paused=bp.debug && bp.status==='paused';
+  highlightDebugRow(paused?bp.last_step:null);
   let h=`<div class="mb-2"><b>Debug #${bp.run_id}</b> <span class="st-${bp.status}">${esc(bp.status)}</span> <span style="color:var(--bs-tertiary-color)">${bp.steps_done}/${bp.steps_total}</span></div>`;
   (bp.steps||[]).forEach(s=>{
     const cur=paused && s.step===bp.last_step;
@@ -398,10 +459,9 @@ function renderDebug(bp){
     }
     h+=`</div>`;
   });
-
   if(paused){
     const nextType=(DEF.steps.find(x=>x.name===bp.next_step)||{}).type;
-    const hint=(COMPONENTS[nextType]&&COMPONENTS[nextType].fields||[]).map(f=>`{context…} → <code>${esc(f.name)}</code>`).join(' · ');
+    const hint=(COMPONENTS[nextType]&&COMPONENTS[nextType].fields||[]).map(f=>`<code>${esc(f.name)}</code>`).join(' · ');
     h+=`<div class="mt-2 p-2" style="background:var(--ui-surface-soft);border-radius:.6rem">
       <div class="fld-label">Next: <b>${esc(bp.next_step||'—')}</b>${nextType?` <span style="color:var(--bs-tertiary-color)">[${esc(nextType)}]</span>`:''}</div>
       ${hint?`<div class="fld-help mb-1">consumes: ${hint}</div>`:''}
@@ -421,7 +481,7 @@ function renderDebug(bp){
 }
 
 // ---- boot ----
-$('#inst') && ($('#inst').onchange=()=>{ CURRENT=null; DEF=null; $('#builder').innerHTML=''; $('#runbox').innerHTML=''; loadList(); });
+$('#inst') && ($('#inst').onchange=()=>{ CURRENT=null; DEF=null; OPEN=null; $('#builder').innerHTML=''; $('#runbox').innerHTML=''; loadList(); });
 <?php if ($instances): ?>loadList();<?php endif; ?>
 </script>
 </body>
