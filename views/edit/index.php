@@ -157,7 +157,7 @@ const COMPONENTS = <?= json_encode($components, JSON_UNESCAPED_SLASHES) ?> || {}
 const TYPES = Object.keys(COMPONENTS);
 const $ = s => document.querySelector(s);
 const inst = () => $('#inst') ? $('#inst').value : '';
-let DEF = null, CURRENT = null, watchTimer = null, DEBUG = null, OPEN = null, sortable = null, UIDSEQ = 1;
+let DEF = null, CURRENT = null, watchTimer = null, DEBUG = null, OPEN = null, sortable = null, UIDSEQ = 1, schedForceCustom = false;
 
 // ---- theme toggle (shares the tiknix 'ui-theme' key) ----
 $('#themeToggle') && ($('#themeToggle').onclick = () => {
@@ -200,10 +200,10 @@ async function loadList(){
 }
 async function openPipeline(slug){
   try{ const d=await jget('/edit/get?inst='+encodeURIComponent(inst())+'&slug='+encodeURIComponent(slug));
-    DEF=normalize(d.def); CURRENT=slug; DEBUG=null; OPEN=null; $('#runbox').innerHTML=''; msg('',''); renderBuilder(); loadList();
+    DEF=normalize(d.def); CURRENT=slug; DEBUG=null; OPEN=null; schedForceCustom=false; $('#runbox').innerHTML=''; msg('',''); renderBuilder(); loadList();
   }catch(e){ msg(e.message,'danger'); }
 }
-function newPipeline(){ DEF=normalize(TEMPLATE()); CURRENT=null; DEBUG=null; OPEN=null; $('#runbox').innerHTML=''; msg('New pipeline — edit + Save.','info'); renderBuilder(); loadList(); }
+function newPipeline(){ DEF=normalize(TEMPLATE()); CURRENT=null; DEBUG=null; OPEN=null; schedForceCustom=false; $('#runbox').innerHTML=''; msg('New pipeline — edit + Save.','info'); renderBuilder(); loadList(); }
 
 function normalize(def){
   def=def||{}; def.steps=Array.isArray(def.steps)?def.steps:[];
@@ -230,9 +230,8 @@ function renderBuilder(){
         <div class="col-6 d-flex align-items-center gap-2 pt-2">
           <div class="form-check form-switch"><input class="form-check-input" type="checkbox" data-meta="expose_as_api" ${DEF.expose_as_api?'checked':''}><label class="form-check-label small">Expose as REST API</label></div>
         </div>
-        <div class="col-6"><div class="fld-label">Schedule (cron)</div>
-          <input class="form-control form-control-sm mono" data-meta="cron" placeholder="*/15 * * * *" value="${esc((DEF.trigger&&DEF.trigger.cron)||'')}"></div>
-        <div class="col-6"><div class="fld-label">Context variables</div><div id="ctxRows"></div>
+        <div class="col-12"><div class="fld-label">Schedule</div><div id="sched"></div></div>
+        <div class="col-12"><div class="fld-label">Context variables</div><div id="ctxRows"></div>
           <button class="btn btn-sm btn-outline-secondary mt-1" onclick="addCtxVar()"><i class="bi bi-plus"></i> variable</button></div>
       </div>
     </div></div>`;
@@ -254,7 +253,96 @@ function renderBuilder(){
     </div>`;
 
   $('#builder').innerHTML = settings + grid + addMenu;
-  initSortable(); renderCtxRows(); syncJson();
+  initSortable(); renderCtxRows(); renderSchedule(); syncJson();
+}
+
+// ---- schedule (cron) builder — friendly UI over the stored 5-field cron ----
+const DOW=['Su','Mo','Tu','We','Th','Fr','Sa'];
+const SCHED_DEFAULT={off:'',minutes:'*/15 * * * *',hours:'0 */1 * * *',daily:'0 9 * * *',weekly:'0 9 * * 1',monthly:'0 9 1 * *'};
+function pad2(n){ return String(n).padStart(2,'0'); }
+function hmToTime(h,m){ return pad2(h||0)+':'+pad2(m||0); }
+function parseCron(expr){
+  expr=(expr||'').trim(); if(!expr) return {mode:'off'};
+  const f=expr.split(/\s+/); if(f.length!==5) return {mode:'custom', raw:expr};
+  const [mi,ho,dom,mon,dow]=f, num=s=>/^\d+$/.test(s), star=(...a)=>a.every(x=>x==='*'); let m;
+  if((m=mi.match(/^\*\/(\d+)$/)) && star(ho,dom,mon,dow)) return {mode:'minutes', n:+m[1]};
+  if(mi==='0' && (m=ho.match(/^\*\/(\d+)$/)) && star(dom,mon,dow)) return {mode:'hours', n:+m[1]};
+  if(num(mi)&&num(ho)&&star(dom,mon,dow)) return {mode:'daily', h:+ho, m:+mi};
+  if(num(mi)&&num(ho)&&dom==='*'&&mon==='*'&&/^[0-6](,[0-6])*$/.test(dow)) return {mode:'weekly', h:+ho, m:+mi, days:dow.split(',').map(Number)};
+  if(num(mi)&&num(ho)&&num(dom)&&mon==='*'&&dow==='*') return {mode:'monthly', h:+ho, m:+mi, dom:+dom};
+  return {mode:'custom', raw:expr};
+}
+function buildCron(s){
+  switch(s.mode){
+    case 'minutes': return `*/${s.n||15} * * * *`;
+    case 'hours':   return `0 */${s.n||1} * * *`;
+    case 'daily':   return `${s.m||0} ${s.h||0} * * *`;
+    case 'weekly':  { const d=(s.days&&s.days.length?s.days:[1]).slice().sort((a,b)=>a-b); return `${s.m||0} ${s.h||0} * * ${d.join(',')}`; }
+    case 'monthly': return `${s.m||0} ${s.h||0} ${s.dom||1} * *`;
+    case 'custom':  return (s.raw||'').trim();
+    default:        return '';
+  }
+}
+function cronEnglish(s){
+  switch(s.mode){
+    case 'off':     return 'no schedule — runs on manual / API / trigger only';
+    case 'minutes': return `every ${s.n} minute${s.n==1?'':'s'}`;
+    case 'hours':   return `every ${s.n} hour${s.n==1?'':'s'}`;
+    case 'daily':   return `daily at ${hmToTime(s.h,s.m)}`;
+    case 'weekly':  { const d=(s.days||[]).slice().sort((a,b)=>a-b).map(x=>DOW[x]); return `weekly on ${d.join(', ')||'—'} at ${hmToTime(s.h,s.m)}`; }
+    case 'monthly': return `monthly on day ${s.dom} at ${hmToTime(s.h,s.m)}`;
+    default:        return 'custom expression';
+  }
+}
+function validCronClient(expr){ const f=(expr||'').trim().split(/\s+/); if(f.length!==5) return false; const R=[[0,59],[0,23],[1,31],[1,12],[0,7]];
+  return f.every((spec,i)=>spec.split(',').every(part=>{ if(part==='') return false; let p=part; if(p.includes('/')){ const [pp,st]=p.split('/'); if(!/^\d+$/.test(st)||+st<1) return false; p=pp; } if(p==='*') return true; if(p.includes('-')){ const [a,b]=p.split('-'); return /^\d+$/.test(a)&&/^\d+$/.test(b)&&+a>=R[i][0]&&+b<=R[i][1]&&+a<=+b; } return /^\d+$/.test(p)&&+p>=R[i][0]&&+p<=R[i][1]; })); }
+function renderSchedule(){
+  const host=$('#sched'); if(!host||!DEF) return;
+  const cur=(DEF.trigger&&DEF.trigger.cron)||'';
+  const s = schedForceCustom ? {mode:'custom', raw:cur} : parseCron(cur);
+  const modes=[['off','Off — manual / API only'],['minutes','Every N minutes'],['hours','Every N hours'],['daily','Daily at…'],['weekly','Weekly on…'],['monthly','Monthly on…'],['custom','Custom cron']];
+  const modeSel=`<select id="schedMode" class="form-select form-select-sm" style="max-width:13rem">${modes.map(([v,l])=>`<option value="${v}" ${s.mode===v?'selected':''}>${l}</option>`).join('')}</select>`;
+  let ctl='';
+  if(s.mode==='minutes'||s.mode==='hours'){
+    const base=(s.mode==='minutes'?[1,2,5,10,15,20,30]:[1,2,3,4,6,8,12]); if(s.n&&!base.includes(s.n)) base.push(s.n);
+    ctl=`Every <select id="schedN" class="form-select form-select-sm d-inline-block" style="width:auto">${base.sort((a,b)=>a-b).map(o=>`<option ${o===s.n?'selected':''}>${o}</option>`).join('')}</select> ${s.mode}`;
+  } else if(s.mode==='daily'){
+    ctl=`at <input type="time" id="schedTime" class="form-control form-control-sm d-inline-block" style="width:auto" value="${hmToTime(s.h,s.m)}">`;
+  } else if(s.mode==='weekly'){
+    ctl=`<div class="btn-group btn-group-sm mb-2" role="group">${DOW.map((d,i)=>`<button type="button" class="btn btn-outline-secondary sched-day ${(s.days||[]).includes(i)?'active':''}" data-day="${i}">${d}</button>`).join('')}</div><div>at <input type="time" id="schedTime" class="form-control form-control-sm d-inline-block" style="width:auto" value="${hmToTime(s.h,s.m)}"></div>`;
+  } else if(s.mode==='monthly'){
+    ctl=`on day <input type="number" id="schedDom" class="form-control form-control-sm d-inline-block" style="width:5rem" min="1" max="31" value="${s.dom||1}"> at <input type="time" id="schedTime" class="form-control form-control-sm d-inline-block" style="width:auto" value="${hmToTime(s.h,s.m)}">`;
+  } else if(s.mode==='custom'){
+    ctl=`<input id="schedRaw" class="form-control form-control-sm mono" placeholder="*/15 * * * *" value="${esc(s.raw||(DEF.trigger&&DEF.trigger.cron)||'')}">`;
+  }
+  host.innerHTML=`${modeSel}<div id="schedCtl" class="mt-2">${ctl}</div><div class="fld-help mt-1" id="schedOut"></div>`;
+  $('#schedMode').onchange=e=>{ DEF.trigger=DEF.trigger||{}; const mode=e.target.value;
+    if(mode==='custom'){ schedForceCustom=true; if(!(DEF.trigger.cron||'').trim()) DEF.trigger.cron='*/15 * * * *'; }
+    else { schedForceCustom=false; DEF.trigger.cron=SCHED_DEFAULT[mode]; }
+    renderSchedule(); };
+  host.querySelectorAll('#schedN,#schedTime,#schedDom,#schedRaw').forEach(el=>el.addEventListener('input',syncSchedule));
+  host.querySelectorAll('.sched-day').forEach(b=>b.addEventListener('click',()=>{ b.classList.toggle('active'); syncSchedule(); }));
+  syncSchedule();
+}
+function readSchedState(){
+  const mode=$('#schedMode')?$('#schedMode').value:'off', s={mode};
+  if(mode==='minutes'||mode==='hours'){ s.n=parseInt($('#schedN').value,10)||1; }
+  else if(mode==='daily'||mode==='weekly'||mode==='monthly'){ const t=($('#schedTime')?$('#schedTime').value:'00:00').split(':'); s.h=parseInt(t[0],10)||0; s.m=parseInt(t[1],10)||0;
+    if(mode==='weekly') s.days=[...document.querySelectorAll('.sched-day.active')].map(b=>+b.dataset.day);
+    if(mode==='monthly') s.dom=parseInt($('#schedDom').value,10)||1; }
+  else if(mode==='custom'){ s.raw=$('#schedRaw')?$('#schedRaw').value:''; }
+  return s;
+}
+function syncSchedule(){
+  const s=readSchedState(), cron=buildCron(s);
+  DEF.trigger=DEF.trigger||{}; if(cron==='') delete DEF.trigger.cron; else DEF.trigger.cron=cron;
+  const out=$('#schedOut');
+  if(out){
+    if(s.mode==='off') out.innerHTML=cronEnglish(s);
+    else if(s.mode==='custom') out.innerHTML = validCronClient(cron) ? `<span class="mono">${esc(cron)}</span> · custom` : `<span class="text-danger">invalid cron — need 5 fields (min hour day month weekday)</span>`;
+    else out.innerHTML=`<span class="mono">${esc(cron)}</span> · ${esc(cronEnglish(s))}`;
+  }
+  syncJson();
 }
 
 function flowOptions(step,i,which){
@@ -402,7 +490,7 @@ function delCtxVar(k){ delete DEF.context_schema[k]; renderCtxRows(); syncJson()
 // ---- JSON advanced ----
 function syncJson(){ const b=$('#jsonBox'); if(b) b.value=JSON.stringify(DEF,null,2); }
 function toggleJson(){ const w=$('#jsonWrap'); w.style.display = w.style.display==='none' ? 'block':'none'; }
-function applyJson(){ try{ DEF=normalize(JSON.parse($('#jsonBox').value)); OPEN=null; renderBuilder(); msg('Applied JSON ✓','success'); }catch(e){ msg('Invalid JSON: '+e.message,'danger'); } }
+function applyJson(){ try{ DEF=normalize(JSON.parse($('#jsonBox').value)); OPEN=null; schedForceCustom=false; renderBuilder(); msg('Applied JSON ✓','success'); }catch(e){ msg('Invalid JSON: '+e.message,'danger'); } }
 
 // ---- validate / save / delete ----
 async function validateDef(){ if(!DEF) return;
