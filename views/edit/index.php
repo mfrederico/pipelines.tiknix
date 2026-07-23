@@ -26,7 +26,8 @@ $dsFile   = $coreRoot . '/views/components/design-system.php';
 <?php if ($coreUrl): ?><link href="<?= $h($coreUrl) ?>/css/app.css" rel="stylesheet"><?php endif; ?>
 <?php if (is_file($dsFile)) include $dsFile;   // tiknix fonts + --ui-* tokens + ui-* component classes ?>
 <style>
-  .pe-topbar .brand-word{font-family:'Playfair Display',Georgia,serif;font-weight:600;font-size:1.35rem;letter-spacing:.005em;}
+  .pe-inst select{width:100%;}
+  .ui-content{padding-top:1.25rem;}   /* no plugin topbar — the tiknix shell provides it */
   .pe-list .item{cursor:pointer;border:1px solid var(--bs-border-color);background:var(--ui-surface);border-radius:.75rem;padding:.6rem .75rem;margin-bottom:.5rem;transition:.12s;}
   .pe-list .item:hover{border-color:var(--ui-primary);}
   .pe-list .item.active{border-color:var(--ui-primary);box-shadow:0 0 0 1px var(--ui-primary) inset;}
@@ -64,25 +65,6 @@ $dsFile   = $coreRoot . '/views/components/design-system.php';
 </head>
 <body>
 
-<header class="ui-topbar pe-topbar">
-  <a href="/edit" class="text-decoration-none d-flex align-items-center gap-2" style="color:inherit">
-    <span class="brand-word">tiknix</span>
-    <span class="ui-eyebrow" style="letter-spacing:.16em">Pipelines</span>
-  </a>
-  <div class="ms-auto d-flex align-items-center gap-2">
-    <?php if ($instances): ?>
-    <select id="inst" class="form-select form-select-sm" style="width:auto">
-      <?php foreach ($instances as $i): ?>
-        <option value="<?= $h($i['slug']) ?>"><?= $h($i['name']) ?> (<?= $h($i['slug']) ?>)<?= $i['owned'] ? '' : ' · team' ?></option>
-      <?php endforeach; ?>
-    </select>
-    <?php endif; ?>
-    <button class="ui-btn-icon" id="themeToggle" type="button" title="Toggle theme"><i class="bi bi-moon-stars"></i></button>
-    <span class="d-none d-md-inline" style="font-size:.85rem;color:var(--bs-secondary-color)"><?= $h($email) ?></span>
-    <a class="btn btn-sm btn-outline-secondary" href="/sso/logout">Sign out</a>
-  </div>
-</header>
-
 <div class="ui-content">
 <?php if (!$instances): ?>
   <div class="ui-panel"><div class="ui-panel-body text-center" style="color:var(--bs-secondary-color)">
@@ -93,6 +75,14 @@ $dsFile   = $coreRoot . '/views/components/design-system.php';
 
     <!-- ============ pipeline list ============ -->
     <div class="col-lg-3">
+      <div class="pe-inst mb-3">
+        <label class="ui-eyebrow d-block mb-1" for="inst">Instance</label>
+        <select id="inst" class="form-select form-select-sm">
+          <?php foreach ($instances as $i): ?>
+            <option value="<?= $h($i['slug']) ?>"><?= $h($i['name']) ?> (<?= $h($i['slug']) ?>)<?= $i['owned'] ? '' : ' · team' ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
       <div class="d-flex justify-content-between align-items-center mb-2">
         <span class="ui-eyebrow">Pipelines</span>
         <button class="btn btn-sm btn-primary" onclick="newPipeline()"><i class="bi bi-plus-lg"></i> New</button>
