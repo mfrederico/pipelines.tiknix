@@ -50,6 +50,15 @@ class PipeFiles {
         return ['error' => $d['message'] ?? "debug start failed (HTTP $code)"];
     }
 
+    /** Deliver a message (or 'alarm') to a durable object on the instance. Returns the object result. */
+    public static function deliver(string $instanceDir, string $slug, string $key, array $message, string $trigger): array {
+        $path = '/pipeline/object/' . rawurlencode($slug) . '?key=' . rawurlencode($key) . '&trigger=' . rawurlencode($trigger);
+        [$d, $code, $err] = self::post($instanceDir, $path, $message, 620);
+        if ($err) return ['error' => $err];
+        if ($code === 200 && is_array($d)) return $d;
+        return ['error' => $d['message'] ?? "deliver failed (HTTP $code)"];
+    }
+
     /** Advance ('step'), finish ('end'), or 'abort' a debug run; $patch is merged into the bag. */
     public static function debugStep(string $instanceDir, int $runId, string $action, array $patch = []): array {
         [$d, $code, $err] = self::post($instanceDir, '/pipeline/debugstep/' . $runId, ['action' => $action, 'patch' => (object) $patch], 620);

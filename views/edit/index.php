@@ -129,8 +129,7 @@ $dsFile   = $coreRoot . '/views/components/design-system.php';
       <div class="ui-panel mb-3">
         <div class="ui-panel-header"><span class="ui-eyebrow">Run / Debug</span></div>
         <div class="ui-panel-body">
-          <label class="fld-label">Test context (JSON)</label>
-          <textarea id="ctx" class="form-control form-control-sm code mb-2" rows="3" spellcheck="false">{}</textarea>
+          <div id="runctl"></div>
           <div id="runbox" class="small"></div>
         </div>
       </div>
@@ -188,7 +187,8 @@ async function loadList(){
     const el=$('#plist'); el.innerHTML='';
     if(!d.pipelines.length){ el.innerHTML='<div class="small" style="color:var(--bs-tertiary-color)">No pipelines yet — click New.</div>'; return; }
     d.pipelines.forEach(p=>{
-      const badges=(p.expose_as_tool?'<span class="ui-chip" style="padding:.05rem .45rem;font-size:.7rem">tool</span> ':'')
+      const badges=(p.stateful?'<span class="ui-chip" style="padding:.05rem .45rem;font-size:.7rem" title="durable object"><i class="bi bi-box"></i> object</span> ':'')
+        +(p.expose_as_tool?'<span class="ui-chip" style="padding:.05rem .45rem;font-size:.7rem">tool</span> ':'')
         +(p.expose_as_api?'<span class="ui-chip" style="padding:.05rem .45rem;font-size:.7rem">api</span> ':'')
         +(p.cron?'<span class="ui-chip" style="padding:.05rem .45rem;font-size:.7rem" title="'+esc(p.cron)+'"><i class="bi bi-clock"></i></span>':'');
       const div=document.createElement('div'); div.className='item'+(CURRENT===p.slug?' active':'');
@@ -234,8 +234,12 @@ function renderBuilder(){
         <div class="col-6 d-flex align-items-center gap-2 pt-2">
           <div class="form-check form-switch"><input class="form-check-input" type="checkbox" data-meta="expose_as_api" ${DEF.expose_as_api?'checked':''}><label class="form-check-label small">Expose as REST API</label></div>
         </div>
-        <div class="col-12"><div class="fld-label">Schedule</div><div id="sched"></div></div>
-        <div class="col-12"><div class="fld-label">Context variables</div><div id="ctxRows"></div>
+        <div class="col-12 d-flex align-items-center gap-2">
+          <div class="form-check form-switch"><input class="form-check-input" type="checkbox" data-meta="stateful" ${DEF.stateful?'checked':''}><label class="form-check-label small"><b>Durable object</b> — keep state across messages, addressed by id, with alarms</label></div>
+        </div>
+        ${DEF.stateful?durableInfo():''}
+        <div class="col-12"${DEF.stateful?' style="display:none"':''}><div class="fld-label">Schedule</div><div id="sched"></div></div>
+        <div class="col-12"><div class="fld-label">${DEF.stateful?'Message fields':'Context variables'}</div><div id="ctxRows"></div>
           <button class="btn btn-sm btn-outline-secondary mt-1" onclick="addCtxVar()"><i class="bi bi-plus"></i> variable</button></div>
       </div>
     </div></div>`;
@@ -257,7 +261,34 @@ function renderBuilder(){
     </div>`;
 
   $('#builder').innerHTML = settings + grid + addMenu;
-  initSortable(); renderCtxRows(); renderSchedule(); syncJson();
+  initSortable(); renderCtxRows(); renderSchedule(); renderRunControls(); syncJson();
+}
+
+// durable-object handler info (shown when stateful): the variable palette + writeback rules
+function durableInfo(){
+  return `<div class="col-12"><div class="p-2" style="background:var(--ui-surface-soft);border-radius:.6rem">
+    <div class="fld-label mb-1"><i class="bi bi-box"></i> Durable object handler (onMessage / onAlarm)</div>
+    <div class="small mono">{state.*} · {message.*} · {trigger} <span style="color:var(--bs-tertiary-color)">(message|alarm)</span> · {object.key}</div>
+    <div class="fld-help mt-1">The last step's output object <b>merges into state</b>. Control keys: <code>__alarm</code> ("+5 minutes" | null) arms/clears an alarm; <code>__destroy</code>: true deletes the object. Reach it at <span class="mono">POST /pipeline/object/&lt;slug&gt;?key=&lt;id&gt;</span>.</div>
+  </div></div>`;
+}
+
+// Run/Debug panel body — a message sender for durable objects, else a test-context box.
+function renderRunControls(){
+  const host=$('#runctl'); if(!host) return;
+  if(DEF && DEF.stateful){
+    host.innerHTML = `
+      <label class="fld-label">Object key <span class="req">*</span></label>
+      <input id="objkey" class="form-control form-control-sm mono mb-2" placeholder="e.g. conversation-42" value="demo">
+      <label class="fld-label">Trigger</label>
+      <select id="trigger" class="form-select form-select-sm mb-2"><option value="message">message</option><option value="alarm">alarm</option></select>
+      <label class="fld-label">Message (JSON)</label>
+      <textarea id="ctx" class="form-control form-control-sm code mb-1" rows="3" spellcheck="false">{}</textarea>
+      <button class="btn btn-sm btn-success w-100" onclick="deliverMsg()"><i class="bi bi-send"></i> Send</button>`;
+  } else {
+    host.innerHTML = `<label class="fld-label">Test context (JSON)</label>
+      <textarea id="ctx" class="form-control form-control-sm code mb-2" rows="3" spellcheck="false">{}</textarea>`;
+  }
 }
 
 // ---- schedule (cron) builder — friendly UI over the stored 5-field cron ----
@@ -487,6 +518,7 @@ function onBuilderChange(e){
   const t=e.target; if(!DEF) return;
   const meta=t.getAttribute('data-meta'), si=t.getAttribute('data-si'), field=t.getAttribute('data-field'), flow=t.getAttribute('data-flow'), conn=t.getAttribute('data-conn');
   if(meta && si===null){   // top-level meta
+    if(meta==='stateful'){ DEF.stateful=t.checked; renderBuilder(); return; }
     if(meta==='expose_as_tool'||meta==='expose_as_api'){ DEF[meta]=t.checked; }
     else if(meta==='cron'){ DEF.trigger=DEF.trigger||{}; DEF.trigger.cron=t.value; }
     else { DEF[meta]=t.value; }
@@ -572,8 +604,29 @@ async function saveDef(){ if(!DEF) return;
 async function deleteDef(){ if(!CURRENT||!confirm('Delete '+CURRENT+'?')) return;
   try{ await jpost('/edit/delete',{inst:inst(),slug:CURRENT}); CURRENT=null; DEF=null; $('#builder').innerHTML=''; loadList(); msg('Deleted.','secondary'); }catch(e){ msg(e.message,'danger'); } }
 
+// ---- durable object: deliver a message / alarm ----
+async function deliverMsg(){
+  if(!DEF||!DEF.slug){ msg('Save first.','warning'); return; }
+  const key=$('#objkey')?$('#objkey').value.trim():''; if(!key){ msg('An object key is required.','warning'); return; }
+  const trigger=$('#trigger')?$('#trigger').value:'message';
+  let message={}; const raw=$('#ctx')?$('#ctx').value.trim():''; if(raw){ try{ message=JSON.parse(raw); }catch(e){ msg('Message is not valid JSON.','danger'); return; } }
+  try{ await saveDef();
+    const d=await jpost('/edit/deliver',{inst:inst(),slug:DEF.slug,key:key,trigger:trigger,message:JSON.stringify(message)});
+    renderDelivery(d);
+  }catch(e){ msg(e.message,'danger'); }
+}
+function renderDelivery(d){
+  const badge = d.busy?'<span class="st-failed">busy</span>':(d.ok?'<span class="st-completed">ok</span>':'<span class="st-failed">'+esc(d.status||'error')+'</span>');
+  let h=`<div class="mb-1"><b>${esc(d.trigger||'message')}</b> → <span class="mono">${esc(d.key||'')}</span> ${badge}</div>`;
+  if(d.destroyed){ h+=`<div class="small st-failed">object destroyed</div>`; }
+  else { h+=`<div class="small" style="color:var(--bs-tertiary-color)">state</div><pre class="io">${esc(JSON.stringify(d.state,null,2))}</pre>`;
+    if(d.wake_at) h+=`<div class="fld-help">⏰ alarm armed (wake_at ${esc(d.wake_at)})</div>`; }
+  $('#runbox').innerHTML=h;
+}
+
 // ---- normal run + watch ----
 async function runDef(){ if(!DEF||!DEF.slug){ msg('Save first.','warning'); return; }
+  if(DEF.stateful){ return deliverMsg(); }
   try{ await saveDef(); const d=await jpost('/edit/run',{inst:inst(),slug:DEF.slug,context:$('#ctx').value||'{}'}); watchRun(d.run_id); }catch(e){ msg(e.message,'danger'); } }
 function watchRun(runId){
   if(watchTimer) clearInterval(watchTimer); DEBUG=null;

@@ -40,7 +40,8 @@ class Edit extends Control {
         foreach ((new Loader(PipeFiles::instanceDir($inst)))->all() as $slug => $def) {
             $out[] = ['slug' => $slug, 'name' => (string) ($def['name'] ?? $slug),
                 'steps' => count($def['steps'] ?? []), 'expose_as_tool' => (bool) ($def['expose_as_tool'] ?? false),
-                'expose_as_api' => (bool) ($def['expose_as_api'] ?? false), 'cron' => (string) ($def['trigger']['cron'] ?? '')];
+                'expose_as_api' => (bool) ($def['expose_as_api'] ?? false), 'cron' => (string) ($def['trigger']['cron'] ?? ''),
+                'stateful' => (bool) ($def['stateful'] ?? false)];
         }
         usort($out, fn($a, $b) => strcmp($a['slug'], $b['slug']));
         Flight::json(['pipelines' => $out]);
@@ -131,6 +132,20 @@ class Edit extends Control {
         $r = PipeFiles::run(PipeFiles::instanceDir($inst), (int) Flight::request()->query->run_id);
         if (!$r) { Flight::jsonError('Run not found yet.', 404); return; }
         Flight::json($r);
+    }
+
+    /** POST /edit/deliver — deliver a message (or alarm) to a durable object; returns its result. */
+    public function deliver($params = []) {
+        [$s, $inst] = $this->guard();
+        if (!$inst) return;
+        $slug    = (string) $this->getParam('slug');
+        $key     = (string) $this->getParam('key');
+        $trigger = ((string) $this->getParam('trigger')) === 'alarm' ? 'alarm' : 'message';
+        $message = json_decode((string) $this->getParam('message'), true);
+        if ($key === '') { Flight::jsonError('An object key is required.', 400); return; }
+        $res = PipeFiles::deliver(PipeFiles::instanceDir($inst), $slug, $key, is_array($message) ? $message : [], $trigger);
+        if (!empty($res['error'])) { Flight::jsonError($res['error'], 400); return; }
+        Flight::json($res + ['key' => $key, 'trigger' => $trigger]);
     }
 
     /** POST /edit/debug — start a step-trace debug run; returns the first breakpoint. */
