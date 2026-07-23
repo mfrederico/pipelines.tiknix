@@ -127,7 +127,7 @@ $dsFile   = $coreRoot . '/views/components/design-system.php';
       <div class="ui-panel">
         <div class="ui-panel-header"><span class="ui-eyebrow">Step types</span></div>
         <div class="ui-panel-body comp small">
-          <?php foreach ($components as $type => $c): ?>
+          <?php foreach ($components as $type => $c): if (!empty($c['internal'])) continue; ?>
             <div class="mb-2"><code><?= $h($type) ?></code> — <?= $h($c['summary'] ?? '') ?></div>
           <?php endforeach; ?>
         </div>
@@ -144,6 +144,7 @@ $dsFile   = $coreRoot . '/views/components/design-system.php';
 "use strict";
 const COMPONENTS = <?= json_encode($components, JSON_UNESCAPED_SLASHES) ?> || {};
 const TYPES = Object.keys(COMPONENTS);
+const PUBLIC_TYPES = TYPES.filter(t => !COMPONENTS[t].internal);   // internal steps (e.g. housekeep) are runtime plumbing — kept out of the palette
 const $ = s => document.querySelector(s);
 const inst = () => $('#inst') ? $('#inst').value : '';
 let DEF = null, CURRENT = null, watchTimer = null, DEBUG = null, OPEN = null, sortable = null, UIDSEQ = 1, schedForceCustom = false, CONNECTORS = [];
@@ -246,7 +247,7 @@ function renderBuilder(){
     <div class="dropdown mt-2">
       <button class="btn btn-outline-primary w-100" data-bs-toggle="dropdown"><i class="bi bi-plus-lg"></i> Add step</button>
       <ul class="dropdown-menu type-menu w-100">
-        ${TYPES.map(t=>`<li><a class="dropdown-item" href="#" onclick="addStep('${t}');return false"><span class="t">${esc(t)}</span><div class="small" style="color:var(--bs-tertiary-color)">${esc(COMPONENTS[t].summary||'')}</div></a></li>`).join('')}
+        ${PUBLIC_TYPES.map(t=>`<li><a class="dropdown-item" href="#" onclick="addStep('${t}');return false"><span class="t">${esc(t)}</span><div class="small" style="color:var(--bs-tertiary-color)">${esc(COMPONENTS[t].summary||'')}</div></a></li>`).join('')}
       </ul>
     </div>`;
 
@@ -396,7 +397,7 @@ function renderRow(step,i){
   const cardBody = step.type==='connection'
     ? renderConnCard(step,i)
     : '<div class="row g-2">'+(comp.fields||[]).map(f=>renderField(f,step.config[f.name],i)).join('')+'</div>';
-  const typeOpts=TYPES.map(t=>`<option value="${t}" ${t===step.type?'selected':''}>${t}</option>`).join('');
+  const typeOpts=TYPES.filter(t=>!COMPONENTS[t].internal||t===step.type).map(t=>`<option value="${t}" ${t===step.type?'selected':''}>${t}</option>`).join('');
   const sum=summarize(step);
   return `<div class="ss-row-wrap ${open?'open':''}" data-uid="${step.__uid}">
     <div class="ss-row ss-cols">
