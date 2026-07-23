@@ -229,6 +229,7 @@ function renderBuilder(){
         <div class="col-6 d-flex align-items-center gap-2 pt-2">
           <div class="form-check form-switch"><input class="form-check-input" type="checkbox" data-meta="expose_as_api" ${DEF.expose_as_api?'checked':''}><label class="form-check-label small">Expose as REST API</label></div>
         </div>
+        ${DEF.expose_as_tool?toolInfo():''}
         ${DEF.expose_as_api?apiEndpointInfo():''}
         <div class="col-12 d-flex align-items-center gap-2">
           <div class="form-check form-switch"><input class="form-check-input" type="checkbox" data-meta="stateful" ${DEF.stateful?'checked':''}><label class="form-check-label small"><b>Durable object</b> — keep state across messages, addressed by id, with alarms</label></div>
@@ -266,6 +267,28 @@ function durableInfo(){
     <div class="fld-label mb-1"><i class="bi bi-box"></i> Durable object handler (onMessage / onAlarm)</div>
     <div class="small mono">{state.*} · {message.*} · {trigger} <span style="color:var(--bs-tertiary-color)">(message|alarm)</span> · {object.key}</div>
     <div class="fld-help mt-1">The last step's output object <b>merges into state</b>. Control keys: <code>__alarm</code> ("+5 minutes" | null) arms/clears an alarm; <code>__destroy</code>: true deletes the object. Reach it at <span class="mono">POST /pipeline/object/&lt;slug&gt;?key=&lt;id&gt;</span>.</div>
+  </div></div>`;
+}
+
+// An expose_as_tool pipeline isn't a URL — it's AUTO-registered as the MCP tool
+// tiknix:pipe_<slug> on the instance's own MCP server, found via tools/list. Show
+// the identifier a client will see, not a fake endpoint.
+function toolInfo(){
+  const base = instApiBase();
+  const slug = (DEF && DEF.slug) ? DEF.slug : 'my-pipeline';
+  const name = 'tiknix:pipe_' + slug;
+  const mcp  = (base||'') + '/mcp/message';
+  return `<div class="col-12"><div class="p-2" style="background:var(--ui-surface-soft);border-radius:.6rem">
+    <div class="fld-label mb-1"><i class="bi bi-plugin"></i> MCP tool</div>
+    <div class="d-flex align-items-center gap-2">
+      <code class="mono text-truncate" style="flex:1" title="${esc(name)}">${esc(name)}</code>
+      <button class="btn btn-sm btn-outline-secondary py-0 px-1" title="Copy tool name" onclick="copyText('${esc(name)}',this)"><i class="bi bi-clipboard"></i></button>
+    </div>
+    <div class="fld-help mt-1">
+      Auto-registered on this instance's MCP server${base?` (<span class="mono">${esc(mcp)}</span>)`:''} — no separate URL to call.
+      Clients discover it via <span class="mono">tools/list</span> and invoke it with <span class="mono">tools/call</span> once connected with the instance's MCP key.
+      Its arguments are this pipeline's context variables.
+    </div>
   </div></div>`;
 }
 
@@ -538,7 +561,7 @@ function onBuilderChange(e){
   if(meta && si===null){   // top-level meta
     if(meta==='stateful'){ DEF.stateful=t.checked; renderBuilder(); return; }
     if(meta==='expose_as_api'){ DEF.expose_as_api=t.checked; syncJson(); renderBuilder(); return; }
-    if(meta==='expose_as_tool'){ DEF[meta]=t.checked; }
+    if(meta==='expose_as_tool'){ DEF.expose_as_tool=t.checked; syncJson(); renderBuilder(); return; }
     else if(meta==='cron'){ DEF.trigger=DEF.trigger||{}; DEF.trigger.cron=t.value; }
     else { DEF[meta]=t.value; }
     syncJson(); return;
