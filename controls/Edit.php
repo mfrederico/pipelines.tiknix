@@ -131,6 +131,21 @@ class Edit extends Control {
         Flight::json(['run_id' => $res['run_id']]);
     }
 
+    /**
+     * POST /edit/mintkey — mint a pk_ REST test key ON the instance being edited. Runs
+     * against THAT instance's own DB via its [pipeline] trigger_secret (same trust path
+     * as run/debug) — the key is intrinsically scoped to that instance. Returns raw once.
+     */
+    public function mintkey($params = []) {
+        [$s, $inst] = $this->guard();
+        if (!$inst) return;
+        $label = trim((string) $this->getParam('label'))
+            ?: ('editor · ' . (string) ($inst['slug'] ?? '') . ' · ' . date('m-d H:i'));
+        $r = PipeFiles::mintKey(PipeFiles::instanceDir($inst), (int) ($s['member_id'] ?? 1), $label);
+        if (!empty($r['error'])) { Flight::jsonError($r['error'], 400); return; }
+        Flight::json(['key' => $r['key'], 'label' => $label]);
+    }
+
     /** GET /edit/runstatus?inst=<slug>&run_id=<id> — poll a run (instance DB). */
     public function runstatus($params = []) {
         [$s, $inst] = $this->guard();

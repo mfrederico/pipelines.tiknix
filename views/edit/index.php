@@ -168,6 +168,15 @@ function pkAdd(){
   const list=pkList(); list.push({label:label,key:k}); pkSave(list); SELECTED_PK=k; renderBuilder();
 }
 function pkForget(){ if(!SELECTED_PK) return; const list=pkList().filter(x=>x.key!==SELECTED_PK); pkSave(list); SELECTED_PK=list.length?list[0].key:''; renderBuilder(); }
+// Mint a fresh pk_ key ON the selected instance (its own DB, via trigger_secret) and
+// drop it into the dropdown — no juggling key types or scopes; you get the right key.
+function pkGenerate(btn){
+  if(btn){ btn.disabled=true; btn.innerHTML='<span class="spinner-border spinner-border-sm"></span>'; }
+  jpost('/edit/mintkey', {inst: inst(), label: ''}).then(d=>{
+    if(d && d.key){ const list=pkList(); list.push({label:(d.label||'editor key'), key:d.key}); pkSave(list); SELECTED_PK=d.key; renderBuilder(); msg('Test key minted — it fills the curl below.','info'); }
+    else { if(btn){ btn.disabled=false; } msg('Could not mint a key','danger'); }
+  }).catch(e=>{ if(btn){ btn.disabled=false; } msg(e.message||'Could not mint a key','danger'); });
+}
 function pkSelect(v){ SELECTED_PK=v; const el=document.getElementById('pk-curl'); if(el) el.textContent=pkCurl(); }
 function pkCurl(){
   const base=instApiBase(); const slug=(DEF&&DEF.slug)?DEF.slug:'my-pipeline';
@@ -335,7 +344,8 @@ function apiEndpointInfo(){
     </div>
     <div class="d-flex align-items-center gap-2 mt-2">
       <span class="fld-label mb-0" style="min-width:2.5rem">Key</span>
-      <select class="form-select form-select-sm mono" style="max-width:280px;font-size:.75rem" onchange="pkSelect(this.value)">${opts}</select>
+      <select class="form-select form-select-sm mono" style="max-width:240px;font-size:.75rem" onchange="pkSelect(this.value)">${opts}</select>
+      <button class="btn btn-sm btn-outline-success py-0 px-1" title="Mint a fresh key on this instance" onclick="pkGenerate(this)"><i class="bi bi-key"></i> Generate</button>
       <button class="btn btn-sm btn-outline-secondary py-0 px-1" title="Paste + save a pk_ key for this instance" onclick="pkAdd()"><i class="bi bi-plus-lg"></i></button>
       ${SELECTED_PK?`<button class="btn btn-sm btn-outline-secondary py-0 px-1" title="Forget the selected key" onclick="pkForget()"><i class="bi bi-trash"></i></button>`:''}
       <button class="btn btn-sm btn-outline-secondary py-0 px-1 ms-auto" title="Copy the full curl" onclick="copyText(document.getElementById('pk-curl').textContent,this)"><i class="bi bi-clipboard"></i> Copy curl</button>

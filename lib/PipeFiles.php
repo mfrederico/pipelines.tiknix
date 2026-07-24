@@ -43,6 +43,18 @@ class PipeFiles {
     }
 
     /**
+     * Mint a pk_ REST test key ON the instance (its pipeapikey table), over the
+     * [pipeline] trigger_secret — same trust path as Run/Debug, NOT broker.ini. The raw
+     * key is returned once. $memberId is attribution only (the editor's SSO'd member).
+     */
+    public static function mintKey(string $instanceDir, int $memberId, string $label): array {
+        [$d, $code, $err] = self::post($instanceDir, '/pipeline/mintkey', ['label' => $label, 'member_id' => $memberId], 15);
+        if ($err) return ['error' => $err];
+        if ($code === 200 && !empty($d['key'])) return ['key' => (string) $d['key']];
+        return ['error' => $d['message'] ?? "mint failed (HTTP $code)"];
+    }
+
+    /**
      * Start a step-trace debug run on the instance. Returns the breakpoint payload
      * (run_id, status, steps[], bag, last/next step) or ['error'=>string]. Debugging
      * runs SYNCHRONOUSLY on the instance (the request blocks per step), so the
