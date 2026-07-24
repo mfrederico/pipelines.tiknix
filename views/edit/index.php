@@ -149,8 +149,31 @@ const $ = s => document.querySelector(s);
 const inst = () => $('#inst') ? $('#inst').value : '';
 // Public base URL of the selected instance (host that serves /pipeline/api/<slug>).
 const instApiBase = () => { const s=$('#inst'); const o=s&&s.selectedOptions&&s.selectedOptions[0]; return (o&&o.getAttribute('data-api-base'))||''; };
-function copyText(t,btn){ const done=()=>{ if(btn){ const i=btn.querySelector('i'); if(i){ const p=i.className; i.className='bi bi-check2'; setTimeout(()=>i.className=p,1200);} } };
-  if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(t).then(done).catch(()=>window.prompt('Copy:',t)); } else { window.prompt('Copy:',t); } }
+function copyText(t,btn){
+  const done=()=>{ if(btn){ const i=btn.querySelector('i'); if(i){ const p=i.className; i.className='bi bi-check2'; setTimeout(()=>i.className=p,1200);} } };
+  // execCommand fallback works inside the sidecar iframe where the async Clipboard API
+  // is often blocked; prompt only as a last resort.
+  const fallback=()=>{ try{ const ta=document.createElement('textarea'); ta.value=t; ta.setAttribute('readonly',''); ta.style.position='fixed'; ta.style.top='-1000px'; ta.style.opacity='0'; document.body.appendChild(ta); ta.focus(); ta.select(); const ok=document.execCommand('copy'); document.body.removeChild(ta); if(ok){ done(); return; } }catch(e){} window.prompt('Copy:',t); };
+  if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(t).then(done).catch(fallback); } else { fallback(); }
+}
+// --- REST test keys (client-side): paste a pk_ key once, saved per instance in this
+//     browser tab, and reuse it to build runnable curls across the whole pipeline suite.
+let SELECTED_PK = '';
+function pkStoreKey(){ return 'pipe_pk_' + (inst() || '_'); }
+function pkList(){ try{ return JSON.parse(sessionStorage.getItem(pkStoreKey()) || '[]'); }catch(e){ return []; } }
+function pkSave(list){ try{ sessionStorage.setItem(pkStoreKey(), JSON.stringify(list)); }catch(e){} }
+function pkAdd(){
+  const k=(window.prompt('Paste a pk_ key for this instance (stored only in this browser tab):')||'').trim(); if(!k) return;
+  const label=(window.prompt('Label for this key (optional):','key '+(pkList().length+1))||'').trim() || ('key '+(pkList().length+1));
+  const list=pkList(); list.push({label:label,key:k}); pkSave(list); SELECTED_PK=k; renderBuilder();
+}
+function pkForget(){ if(!SELECTED_PK) return; const list=pkList().filter(x=>x.key!==SELECTED_PK); pkSave(list); SELECTED_PK=list.length?list[0].key:''; renderBuilder(); }
+function pkSelect(v){ SELECTED_PK=v; const el=document.getElementById('pk-curl'); if(el) el.textContent=pkCurl(); }
+function pkCurl(){
+  const base=instApiBase(); const slug=(DEF&&DEF.slug)?DEF.slug:'my-pipeline';
+  const url=(base||'')+'/pipeline/api/'+slug; const key=SELECTED_PK||'pk_YOUR_KEY';
+  return 'curl -X POST '+url+' \\\n  -H "Authorization: Bearer '+key+'" \\\n  -H "Content-Type: application/json" \\\n  -d \'{}\'';
+}
 let DEF = null, CURRENT = null, watchTimer = null, DEBUG = null, OPEN = null, sortable = null, UIDSEQ = 1, schedForceCustom = false, CONNECTORS = [];
 
 // ---- theme toggle (shares the tiknix 'ui-theme' key) ----
@@ -297,8 +320,12 @@ function toolInfo(){
 function apiEndpointInfo(){
   const base = instApiBase();
   const slug = (DEF && DEF.slug) ? DEF.slug : 'my-pipeline';
-  const path = '/pipeline/api/' + slug;
-  const url  = (base ? base : '') + path;
+  const url  = (base ? base : '') + '/pipeline/api/' + slug;
+  const keys = pkList();
+  if (!SELECTED_PK && keys.length) SELECTED_PK = keys[0].key;
+  const opts = keys.length
+    ? keys.map(k=>`<option value="${esc(k.key)}"${k.key===SELECTED_PK?' selected':''}>${esc(k.label)} · ${esc(k.key.slice(0,10))}…</option>`).join('')
+    : '<option value="">— no keys saved —</option>';
   return `<div class="col-12"><div class="p-2" style="background:var(--ui-surface-soft);border-radius:.6rem">
     <div class="fld-label mb-1"><i class="bi bi-hdd-network"></i> REST endpoint</div>
     <div class="d-flex align-items-center gap-2">
@@ -306,9 +333,17 @@ function apiEndpointInfo(){
       <code class="mono text-truncate" style="flex:1" title="${esc(url)}">${esc(url)}</code>
       <button class="btn btn-sm btn-outline-secondary py-0 px-1" title="Copy endpoint" onclick="copyText('${esc(url)}',this)"><i class="bi bi-clipboard"></i></button>
     </div>
+    <div class="d-flex align-items-center gap-2 mt-2">
+      <span class="fld-label mb-0" style="min-width:2.5rem">Key</span>
+      <select class="form-select form-select-sm mono" style="max-width:280px;font-size:.75rem" onchange="pkSelect(this.value)">${opts}</select>
+      <button class="btn btn-sm btn-outline-secondary py-0 px-1" title="Paste + save a pk_ key for this instance" onclick="pkAdd()"><i class="bi bi-plus-lg"></i></button>
+      ${SELECTED_PK?`<button class="btn btn-sm btn-outline-secondary py-0 px-1" title="Forget the selected key" onclick="pkForget()"><i class="bi bi-trash"></i></button>`:''}
+      <button class="btn btn-sm btn-outline-secondary py-0 px-1 ms-auto" title="Copy the full curl" onclick="copyText(document.getElementById('pk-curl').textContent,this)"><i class="bi bi-clipboard"></i> Copy curl</button>
+    </div>
+    <pre class="mono" id="pk-curl" style="white-space:pre-wrap;word-break:break-all;background:var(--ui-surface);border-radius:.4rem;padding:.5rem;font-size:.72rem;margin:.4rem 0 0;border:1px solid var(--ui-border,#2a3350)">${esc(pkCurl())}</pre>
     <div class="fld-help mt-1">
-      Authenticate with a per-member key: <span class="mono">Authorization: Bearer pk_…</span> (mint one at <span class="mono">${esc((base||'')+'/pipeline/keys')}</span>).
-      Body is the context JSON. Runs synchronously; append <span class="mono">?async=1</span> to get a <span class="mono">run_id</span> + <span class="mono">status_url</span> you poll at <span class="mono">GET /pipeline/status/&lt;run_id&gt;</span>.
+      Keys are saved only in this browser tab, per instance — paste one with <i class="bi bi-plus-lg"></i> (mint at <span class="mono">${esc((base||'')+'/pipeline/keys')}</span> or on the workspace Integrations page). Pick a key and it fills the curl for every pipeline, so you can test the whole suite.
+      Body is the context JSON; append <span class="mono">?async=1</span> for a poll-able <span class="mono">run_id</span>.
       ${base?'':'<span class="text-warning">This instance has no <span class="mono">[app] baseurl</span> set, so only the path is shown.</span>'}
     </div>
   </div></div>`;
