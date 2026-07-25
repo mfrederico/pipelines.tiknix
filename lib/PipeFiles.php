@@ -67,6 +67,14 @@ class PipeFiles {
         return ['error' => $d['message'] ?? "debug start failed (HTTP $code)"];
     }
 
+    /** Shape-only (keys/types + short samples, never raw values) of the pipeline's latest run
+     *  per-step outputs — powers the editor's variable autocomplete for every team member. */
+    public static function varShapes(string $instanceDir, string $slug): array {
+        [$d, $code, $err] = self::post($instanceDir, '/pipeline/varshapes/' . rawurlencode($slug), [], 15);
+        if ($err || $code !== 200 || !is_array($d)) return ['ok' => false, 'shapes' => []];
+        return $d;
+    }
+
     /** Deliver a message (or 'alarm') to a durable object on the instance. Returns the object result. */
     public static function deliver(string $instanceDir, string $slug, string $key, array $message, string $trigger): array {
         $path = '/pipeline/object/' . rawurlencode($slug) . '?key=' . rawurlencode($key) . '&trigger=' . rawurlencode($trigger);

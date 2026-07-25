@@ -180,6 +180,14 @@ class Edit extends Control {
         Flight::json($res);
     }
 
+    /** GET /edit/varshapes — shape-only of the last run's step outputs, for the variable
+     *  autocomplete. Team-shared + durable (read from the instance's run history), PII-safe. */
+    public function varshapes($params = []) {
+        [$s, $inst] = $this->guard();
+        if (!$inst) return;
+        Flight::json(PipeFiles::varShapes(PipeFiles::instanceDir($inst), (string) $this->getParam('slug')));
+    }
+
     /** POST /edit/debugstep — advance/finish/abort a debug run (patch = injected data). */
     public function debugstep($params = []) {
         [$s, $inst] = $this->guard();
