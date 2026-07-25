@@ -69,7 +69,12 @@ $dsFile   = $coreRoot . '/views/components/design-system.php';
   .type-menu{max-height:60vh;overflow:auto;}
   .type-menu .t{font-family:var(--ui-ff-mono);}
   .comp code{color:var(--bs-link-color);}
-  textarea.code{font-family:var(--ui-ff-mono);font-size:12.5px;white-space:pre;tab-size:2;}
+  textarea.code{font-family:var(--ui-ff-mono);font-size:12.5px;white-space:pre;tab-size:2;line-height:1.55;}
+  /* line-numbered code editor (auto-grows to ~25 rows, then scrolls) */
+  .code-wrap{display:flex;align-items:stretch;border:1px solid var(--bs-border-color);border-radius:.375rem;overflow:hidden;background:var(--bs-body-bg);}
+  .code-wrap:focus-within{border-color:var(--ui-primary);box-shadow:0 0 0 .15rem color-mix(in srgb,var(--ui-primary) 22%,transparent);}
+  .code-gutter{flex:0 0 auto;min-width:2.4em;padding:.375rem .45rem;text-align:right;color:var(--bs-tertiary-color);background:var(--ui-surface-soft);font-family:var(--ui-ff-mono);font-size:12.5px;line-height:1.55;white-space:pre;overflow:hidden;user-select:none;border-right:1px solid var(--bs-border-color);}
+  .code-wrap textarea.code{flex:1 1 auto;border:0!important;border-radius:0;box-shadow:none!important;resize:none;overflow:auto;}
 </style>
 </head>
 <body>
@@ -299,7 +304,7 @@ function renderBuilder(){
     </div>`;
 
   $('#builder').innerHTML = settings + grid + addMenu;
-  initSortable(); renderCtxRows(); renderSchedule(); renderRunControls(); syncJson();
+  initSortable(); renderCtxRows(); renderSchedule(); renderRunControls(); syncJson(); decorateCode();
 }
 
 // durable-object handler info (shown when stateful): the variable palette + writeback rules
@@ -597,6 +602,7 @@ function toggleRow(u){ OPEN = (OPEN===u)?null:u;
     const on = String(OPEN)===w.dataset.uid;
     w.classList.toggle('open',on);
     const card=w.querySelector('.ss-card'); if(card) card.hidden=!on;
+    if(on&&card) card.querySelectorAll('textarea.code').forEach(t=>t._fit&&t._fit());   // re-measure now that it's visible
   });
 }
 
@@ -910,6 +916,29 @@ function insertTok(tok){
   el.value=el.value.slice(0,pos)+tok+el.value.slice(pos);
   const caret=pos+tok.length; el.selectionStart=el.selectionEnd=caret;
   el.dispatchEvent(new Event('input',{bubbles:true})); el.focus();
+}
+// Wrap each config code textarea with a synced line-number gutter; auto-grow to a 25-row
+// cap (small fields stay compact), then scroll. Runs after every renderBuilder — the builder
+// innerHTML is fully replaced each render, so there are never stale wrappers to clean up.
+function decorateCode(){
+  document.querySelectorAll('#steps textarea.code:not([data-lined])').forEach(ta=>{
+    ta.setAttribute('data-lined','1'); ta.removeAttribute('rows');
+    const wrap=document.createElement('div'); wrap.className='code-wrap';
+    const gut=document.createElement('div'); gut.className='code-gutter';
+    ta.parentNode.insertBefore(wrap,ta); wrap.appendChild(gut); wrap.appendChild(ta);
+    const cs=getComputedStyle(ta), lh=parseFloat(cs.lineHeight)||18;
+    const pad=(parseFloat(cs.paddingTop)||0)+(parseFloat(cs.paddingBottom)||0);
+    const MINH=Math.round(3*lh+pad), MAXH=Math.round(25*lh+pad);
+    const fit=()=>{
+      const n=ta.value.split('\n').length||1; let g=''; for(let i=1;i<=n;i++) g+=i+'\n'; gut.textContent=g;
+      ta.style.height='auto'; ta.style.height=Math.min(MAXH,Math.max(MINH,ta.scrollHeight))+'px';
+      gut.scrollTop=ta.scrollTop;
+    };
+    ta._fit=fit;
+    ta.addEventListener('input',fit);
+    ta.addEventListener('scroll',()=>{ gut.scrollTop=ta.scrollTop; });
+    fit();
+  });
 }
 document.addEventListener('focusin', e=>{ if(vacEligible(e.target)) VACLAST=e.target; });
 document.addEventListener('input', e=>{ if(vacEligible(e.target)) vacShow(e.target); }, true);
