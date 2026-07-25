@@ -56,6 +56,15 @@ $dsFile   = $coreRoot . '/views/components/design-system.php';
   .st-completed{color:#3bbf7a}.st-failed{color:#e0559b}.st-running,.st-awaiting{color:#e0a23b}.st-pending,.st-paused{color:var(--bs-tertiary-color)}
   .trace-step{border:1px solid var(--bs-border-color);border-radius:.6rem;padding:.45rem .6rem;margin-bottom:.4rem;font-size:.85rem;}
   .trace-step.cur{border-color:var(--ui-primary);box-shadow:0 0 0 1px var(--ui-primary) inset;}
+  /* variable autocomplete + chips */
+  .vac{position:absolute;z-index:3000;background:var(--bs-body-bg);border:1px solid var(--bs-border-color);border-radius:.5rem;box-shadow:0 6px 20px rgba(0,0,0,.18);max-height:240px;overflow:auto;font-size:12.5px;}
+  .vac-item{display:flex;justify-content:space-between;gap:1rem;padding:.28rem .55rem;cursor:pointer;font-family:var(--ui-ff-mono);white-space:nowrap;}
+  .vac-item.active{background:var(--ui-primary);color:#fff;}
+  .vac-ty{opacity:.6;font-size:11px;}
+  .var-chips{display:flex;flex-wrap:wrap;gap:.3rem;align-items:center;margin:0 0 .55rem;padding:.35rem .5rem;background:var(--ui-surface-soft);border-radius:.5rem;}
+  .var-chips-lab{font-size:11px;color:var(--bs-tertiary-color);text-transform:uppercase;letter-spacing:.03em;margin-right:.15rem;}
+  .var-chip{font-family:var(--ui-ff-mono);font-size:11.5px;padding:.1rem .4rem;border:1px solid var(--bs-border-color);border-radius:.4rem;cursor:pointer;background:var(--bs-body-bg);white-space:nowrap;}
+  .var-chip:hover{background:var(--ui-primary);color:#fff;border-color:var(--ui-primary);}
   pre.io{background:var(--ui-surface-inset);border-radius:.5rem;padding:.5rem;margin:.35rem 0 0;font-size:11.5px;max-height:26vh;overflow:auto;white-space:pre-wrap;word-break:break-word;}
   .type-menu{max-height:60vh;overflow:auto;}
   .type-menu .t{font-family:var(--ui-ff-mono);}
@@ -227,10 +236,10 @@ async function loadList(){
 }
 async function openPipeline(slug){
   try{ const d=await jget('/edit/get?inst='+encodeURIComponent(inst())+'&slug='+encodeURIComponent(slug));
-    DEF=normalize(d.def); CURRENT=slug; DEBUG=null; OPEN=null; schedForceCustom=false; $('#runbox').innerHTML=''; msg('',''); renderBuilder(); loadList();
+    DEF=normalize(d.def); CURRENT=slug; DEBUG=null; SHAPES={}; OPEN=null; schedForceCustom=false; $('#runbox').innerHTML=''; msg('',''); renderBuilder(); loadShapes(); loadList();
   }catch(e){ msg(e.message,'danger'); }
 }
-function newPipeline(){ DEF=normalize(TEMPLATE()); CURRENT=null; DEBUG=null; OPEN=null; schedForceCustom=false; $('#runbox').innerHTML=''; msg('New pipeline — edit + Save.','info'); renderBuilder(); loadList(); }
+function newPipeline(){ DEF=normalize(TEMPLATE()); CURRENT=null; DEBUG=null; SHAPES={}; OPEN=null; schedForceCustom=false; $('#runbox').innerHTML=''; msg('New pipeline — edit + Save.','info'); renderBuilder(); loadList(); }
 
 // the instance's connected connectors (for the connection step's dropdown; no secrets)
 async function loadConnectors(){ try{ const d=await jget('/edit/connectors?inst='+encodeURIComponent(inst())); CONNECTORS=d.connectors||[]; }catch(e){ CONNECTORS=[]; } if(DEF) renderBuilder(); }
@@ -505,7 +514,7 @@ function renderRow(step,i){
       <button class="ui-btn-icon no-toggle" style="width:26px;height:26px" title="Delete step" onclick="removeStep(${i})"><i class="bi bi-x-lg"></i></button>
     </div>
     <div class="ss-summary">${sum?esc(sum):'<span style="opacity:.55">— click to configure —</span>'}</div>
-    <div class="ss-card" ${open?'':'hidden'}>${cardBody}</div>
+    <div class="ss-card" ${open?'':'hidden'}>${open?varChips(i):''}${cardBody}</div>
   </div>`;
 }
 
@@ -777,8 +786,145 @@ function renderDebug(bp){
   $('#runbox').innerHTML=h;
 }
 
+// ============ variable autocomplete + chips ============
+// Suggestions come from: (1) the pipeline's context_schema, (2) each PRIOR step's output —
+// static reserved keys always, upgraded to the real field tree once a run exists (SHAPES,
+// team-shared + PII-safe) or a live debug trace is open (DEBUG.bag), (3) time/run built-ins.
+// Tokens mirror the runtime bag exactly: {greet.data.shop.name} == {prev.data.shop.name}.
+let SHAPES = {};      // persisted per-step OUTPUT shapes (keys/types), team-shared, PII-safe
+let VAC = null;       // active autocomplete popup state
+let VACLAST = null;   // last eligible field focused (chip-insert target)
+
+async function loadShapes(){
+  if(!CURRENT){ SHAPES={}; return; }
+  try{ const d=await jget('/edit/varshapes?inst='+encodeURIComponent(inst())+'&slug='+encodeURIComponent(CURRENT));
+       SHAPES=(d&&d.shapes)?d.shapes:{}; }catch(e){ SHAPES={}; }
+  if(DEF) renderBuilder();
+}
+function leafNode(t){ return {type:t, children:{}, leaf:true}; }
+function jsShape(v){   // a live bag value → walkable node
+  if(Array.isArray(v)) return {type:'array', children:{'0':jsShape(v.length?v[0]:null)}};
+  if(v&&typeof v==='object'){ const ch={}; let n=0; for(const k in v){ if(++n>80) break; ch[k]=jsShape(v[k]); } return {type:'object', children:ch}; }
+  return leafNode(v===null?'null':typeof v);
+}
+function srvNode(sh){   // server shape {t,keys|of} → node
+  if(!sh||typeof sh!=='object') return leafNode('any');
+  if(sh.t==='object'){ const ch={}, K=sh.keys||{}; for(const k in K) ch[k]=srvNode(K[k]); return {type:'object', children:ch}; }
+  if(sh.t==='array') return {type:'array', children:{'0':srvNode(sh.of||{})}};
+  return leafNode(sh.t||'any');
+}
+// A prior step, flattened like the runtime bag: output keys hoisted + reserved meta.
+function stepNode(step){
+  const name=step.name;
+  if(DEBUG&&DEBUG.bag&&DEBUG.bag[name]!==undefined) return jsShape(DEBUG.bag[name]);  // live: already flattened+meta
+  const out=SHAPES[name]?srvNode(SHAPES[name]):null, ch={};
+  if(out&&out.children) for(const k in out.children) ch[k]=out.children[k];            // flatten output to top
+  ch.output=out||leafNode('any'); ch.stdout=leafNode('string'); ch.stderr=leafNode('string'); ch.exit=leafNode('int');
+  const cfg=step.config||{}, ich={}; for(const k in cfg) ich[k]=leafNode(typeof cfg[k]);
+  ch.input={type:'object', children:ich};
+  return {type:'object', children:ch};
+}
+function prevNode(step){   // {prev.*} = flattened output ONLY (no meta), matching the runtime
+  if(DEBUG&&DEBUG.bag&&DEBUG.bag.prev!==undefined) return jsShape(DEBUG.bag.prev);
+  return SHAPES[step.name]?srvNode(SHAPES[step.name]):{type:'object', children:{}};
+}
+function buildVarTree(si){
+  const roots={}, cs=(DEF&&DEF.context_schema)||{}, cch={};
+  for(const k in cs) cch[k]=leafNode((cs[k]&&cs[k].type)||'string');
+  roots.context={type:'object', children:cch};
+  for(let j=0;j<si;j++){ const s=DEF.steps[j]; if(s&&s.name) roots[s.name]=stepNode(s); }
+  if(si>0&&DEF.steps[si-1]) roots.prev=prevNode(DEF.steps[si-1]);
+  roots.time={type:'object', children:{now:leafNode('string'),date:leafNode('string'),ts:leafNode('int'),iso:leafNode('string')}};
+  ['run_id','run_uid','run_directory','pipeline_slug'].forEach(k=>roots[k]=leafNode('string'));
+  return roots;
+}
+function vacEligible(el){
+  if(!el||(el.tagName!=='TEXTAREA'&&el.tagName!=='INPUT')) return false;
+  if(el.tagName==='INPUT'){ const t=(el.getAttribute('type')||'text').toLowerCase(); if(t!=='text'&&t!=='') return false; }
+  const conn=el.getAttribute('data-conn');
+  return el.hasAttribute('data-field')||conn==='path'||conn==='query'||conn==='variables'||conn==='body';
+}
+function vacStepIndex(el){ const si=el.getAttribute('data-si'); return si==null?(DEF?DEF.steps.length:0):parseInt(si,10); }
+function tokenAt(el){
+  const pos=el.selectionStart; if(pos==null) return null;
+  const s=el.value.slice(0,pos), open=s.lastIndexOf('{'); if(open<0) return null;
+  if(s.indexOf('}',open)>=0) return null;
+  const partial=s.slice(open+1); if(!/^[a-zA-Z0-9_.\-]*$/.test(partial)) return null;
+  return {start:open, partial};
+}
+function vacItems(si,partial){
+  let children=buildVarTree(si); const segs=partial.split('.'), last=segs.pop();
+  for(const seg of segs){ const n=children[seg]; if(!n||!n.children) return []; children=n.children; }
+  return Object.keys(children).filter(k=>k!=='…'&&k.toLowerCase().startsWith(last.toLowerCase()))
+    .slice(0,40).map(k=>({name:k, node:children[k], base:segs.concat(k).join('.')}));
+}
+function vacHide(){ if(VAC){ VAC.box.remove(); VAC=null; } }
+function vacPaint(){
+  VAC.box.innerHTML=VAC.items.map((it,i)=>{
+    const ty=it.node.type||''; const tag=it.node.leaf?esc(ty):(ty==='array'?'[ ]':'{…}');
+    return `<div class="vac-item ${i===VAC.active?'active':''}" data-i="${i}"><span>${esc(it.name)}</span><span class="vac-ty">${tag}</span></div>`;
+  }).join('');
+}
+function vacShow(el){
+  if(!DEF){ vacHide(); return; }
+  const tk=tokenAt(el); if(!tk){ vacHide(); return; }
+  const items=vacItems(vacStepIndex(el), tk.partial); if(!items.length){ vacHide(); return; }
+  if(!VAC){ const box=document.createElement('div'); box.className='vac'; document.body.appendChild(box); VAC={box}; }
+  VAC.el=el; VAC.tk=tk; VAC.items=items; VAC.active=0; vacPaint();
+  const r=el.getBoundingClientRect();
+  VAC.box.style.left=(window.scrollX+r.left)+'px';
+  VAC.box.style.top=(window.scrollY+r.bottom+2)+'px';
+  VAC.box.style.minWidth=Math.min(360,Math.max(200,r.width))+'px';
+}
+function vacAccept(i){
+  const it=VAC.items[i]; if(!it) return; const el=VAC.el, tk=VAC.tk, leaf=it.node.leaf;
+  const before=el.value.slice(0,tk.start); let after=el.value.slice(el.selectionStart);
+  if(leaf&&after[0]==='}') after=after.slice(1);
+  const insert='{'+it.base+(leaf?'}':'.');
+  el.value=before+insert+after; const caret=(before+insert).length; el.selectionStart=el.selectionEnd=caret;
+  el.dispatchEvent(new Event('input',{bubbles:true})); el.focus();
+  if(leaf) vacHide(); else vacShow(el);
+}
+function collectLeaves(node,base,out,depth){
+  if(out.length>=20||depth>4) return; const ch=node.children||{};
+  for(const k in ch){ if(k==='…') continue; const c=ch[k], p=base?base+'.'+k:k;
+    if(c.leaf) out.push(p); else collectLeaves(c,p,out,depth+1); if(out.length>=20) return; }
+}
+function varChips(si){
+  if(!DEF) return ''; const roots=buildVarTree(si), leaves=[];
+  if(roots.context) collectLeaves(roots.context,'context',leaves,0);
+  if(roots.prev) collectLeaves(roots.prev,'prev',leaves,0);
+  for(let j=0;j<si;j++){ const s=DEF.steps[j]; if(s&&s.name&&roots[s.name]) collectLeaves(roots[s.name],s.name,leaves,0); }
+  const uniq=[...new Set(leaves)].slice(0,18);
+  const chips=uniq.map(p=>`<span class="var-chip" data-tok="${esc('{'+p+'}')}">{${esc(p)}}</span>`).join('');
+  return `<div class="var-chips"><span class="var-chips-lab"><i class="bi bi-braces"></i> insert</span>`+
+    (chips||'<span class="fld-help mb-0">type <code>{</code> for suggestions · run a debug trace to surface real fields</span>')+`</div>`;
+}
+function insertTok(tok){
+  const el=(VACLAST&&document.body.contains(VACLAST))?VACLAST:null; if(!el) return;
+  const pos=el.selectionStart!=null?el.selectionStart:el.value.length;
+  el.value=el.value.slice(0,pos)+tok+el.value.slice(pos);
+  const caret=pos+tok.length; el.selectionStart=el.selectionEnd=caret;
+  el.dispatchEvent(new Event('input',{bubbles:true})); el.focus();
+}
+document.addEventListener('focusin', e=>{ if(vacEligible(e.target)) VACLAST=e.target; });
+document.addEventListener('input', e=>{ if(vacEligible(e.target)) vacShow(e.target); }, true);
+document.addEventListener('mousedown', e=>{ if(e.target.closest && (e.target.closest('.vac')||e.target.closest('.var-chip'))) e.preventDefault(); });  // keep the field focused/caret
+document.addEventListener('click', e=>{
+  const item=e.target.closest&&e.target.closest('.vac-item'); if(item&&VAC){ vacAccept(parseInt(item.dataset.i,10)); return; }
+  const chip=e.target.closest&&e.target.closest('.var-chip'); if(chip){ insertTok(chip.getAttribute('data-tok')); return; }
+  if(VAC&&!(e.target.closest&&e.target.closest('.vac'))) vacHide();
+});
+document.addEventListener('keydown', e=>{
+  if(!VAC||VAC.el!==e.target) return;
+  if(e.key==='ArrowDown'){ VAC.active=(VAC.active+1)%VAC.items.length; vacPaint(); e.preventDefault(); }
+  else if(e.key==='ArrowUp'){ VAC.active=(VAC.active-1+VAC.items.length)%VAC.items.length; vacPaint(); e.preventDefault(); }
+  else if(e.key==='Enter'||e.key==='Tab'){ vacAccept(VAC.active); e.preventDefault(); }
+  else if(e.key==='Escape'){ vacHide(); e.preventDefault(); }
+});
+
 // ---- boot ----
-$('#inst') && ($('#inst').onchange=()=>{ CURRENT=null; DEF=null; OPEN=null; CONNECTORS=[]; $('#builder').innerHTML=''; $('#runbox').innerHTML=''; loadList(); loadConnectors(); });
+$('#inst') && ($('#inst').onchange=()=>{ CURRENT=null; DEF=null; SHAPES={}; OPEN=null; CONNECTORS=[]; $('#builder').innerHTML=''; $('#runbox').innerHTML=''; loadList(); loadConnectors(); });
 <?php if ($instances): ?>loadList(); loadConnectors();<?php endif; ?>
 </script>
 </body>
