@@ -727,8 +727,12 @@ async function runDef(){ if(!DEF||!DEF.slug){ msg('Save first.','warning'); retu
 function watchRun(runId){
   if(watchTimer) clearInterval(watchTimer); DEBUG=null;
   const render=r=>{ let h=`<div class="mb-1"><b>Run #${runId}</b> <span class="st-${r.status}">${esc(r.status)}</span> <span style="color:var(--bs-tertiary-color)">${r.steps_done}/${r.steps_total}</span></div>`;
-    (r.steps||[]).forEach(s=>{ h+=`<div class="st-${s.status}">${s.status==='completed'?'✓':s.status==='failed'?'✗':'…'} ${esc(s.step)} <span style="color:var(--bs-tertiary-color)">[${esc(s.type)}] ${s.duration_ms||0}ms</span></div>`; });
+    (r.steps||[]).forEach(s=>{
+      h+=`<div class="st-${s.status}">${s.status==='completed'?'✓':s.status==='failed'?'✗':'…'} <b>${esc(s.step)}</b> <span style="color:var(--bs-tertiary-color)">[${esc(s.type)}]${s.exit?' exit '+s.exit:''} ${s.duration_ms||0}ms</span></div>`;
+      if(s.stderr && (s.status==='failed'||s.exit)) h+=`<pre class="io st-failed">${esc(s.stderr)}</pre>`;   // WHY it failed
+    });
     if(r.await_prompt) h+=`<div class="st-awaiting mt-1">⏸ awaiting: ${esc(r.await_prompt)}</div>`;
+    if(r.error) h+=`<div class="st-failed small mt-1"><b>Failed:</b> ${esc(r.error)}</div>`;
     if(r.output!=null) h+=`<div class="small mt-2" style="color:var(--bs-tertiary-color)">output</div><pre class="io">${esc(JSON.stringify(r.output,null,2))}</pre>`;
     $('#runbox').innerHTML=h; };
   const poll=async()=>{ try{ const r=await jget('/edit/runstatus?inst='+encodeURIComponent(inst())+'&run_id='+runId); render(r);
