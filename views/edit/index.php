@@ -751,11 +751,12 @@ async function debugStart(){ if(!DEF||!DEF.slug){ msg('Save first.','warning'); 
   try{ await saveDef(); $('#runbox').innerHTML='<div class="small" style="color:var(--bs-tertiary-color)">Starting debug…</div>';
     const bp=await jpost('/edit/debug',{inst:inst(),slug:DEF.slug,context:$('#ctx').value||'{}'}); renderDebug(bp);
   }catch(e){ msg(e.message,'danger'); $('#runbox').innerHTML=''; } }
+function dbgMsg(t){ const dm=document.getElementById('debugMsg'); if(dm) dm.textContent=t; else msg(t,'danger'); }
 async function debugAct(action){
   const patch=$('#patchBox')?$('#patchBox').value.trim():'';
-  let parsed={}; if(patch){ try{ parsed=JSON.parse(patch); }catch(e){ msg('Inject data is not valid JSON.','danger'); return; } }
+  let parsed={}; if(patch){ try{ parsed=JSON.parse(patch); }catch(e){ dbgMsg('Inject data is not valid JSON.'); return; } }
   try{ const bp=await jpost('/edit/debugstep',{inst:inst(),run_id:DEBUG.run_id,action:action,patch:JSON.stringify(parsed)}); renderDebug(bp); }
-  catch(e){ msg(e.message,'danger'); }
+  catch(e){ dbgMsg(e.message); }
 }
 function highlightDebugRow(stepName){
   document.querySelectorAll('#steps .ss-row-wrap').forEach(w=>{ const nm=w.querySelector('[data-meta="name"]'); w.classList.toggle('dbg-cur', !!stepName && nm && nm.value===stepName); });
@@ -772,6 +773,8 @@ function renderDebug(bp){
       if(s.input!=null) h+=`<div class="small mt-1" style="color:var(--bs-tertiary-color)">resolved input</div><pre class="io">${esc(JSON.stringify(s.input,null,2))}</pre>`;
       if(s.output!=null) h+=`<div class="small" style="color:var(--bs-tertiary-color)">output</div><pre class="io">${esc(JSON.stringify(s.output,null,2))}</pre>`;
       if(s.stderr) h+=`<pre class="io st-failed">${esc(s.stderr)}</pre>`;
+    } else if(s.status==='failed' && s.stderr){   // surface WHY at the step that failed
+      h+=`<pre class="io st-failed">${esc(s.stderr)}</pre>`;
     }
     h+=`</div>`;
   });
@@ -784,6 +787,7 @@ function renderDebug(bp){
       <label class="fld-label">Inject data (merged into the bag)</label>
       <textarea id="patchBox" class="form-control form-control-sm code" rows="3" placeholder='{"context":{"key":"value"}}'></textarea>
       <details class="mt-1"><summary class="small" style="color:var(--bs-tertiary-color)">current data (bag)</summary><pre class="io bag-view">${esc(JSON.stringify(bp.bag,null,2))}</pre></details>
+      <div id="debugMsg" class="st-failed small mt-1"></div>
       <div class="d-flex gap-1 mt-2">
         <button class="btn btn-sm btn-warning" onclick="debugAct('step')"><i class="bi bi-skip-end"></i> Step</button>
         <button class="btn btn-sm btn-success" onclick="debugAct('end')"><i class="bi bi-play-fill"></i> Continue</button>
