@@ -198,7 +198,7 @@ function pkForget(){ if(!SELECTED_PK) return; const list=pkList().filter(x=>x.ke
 // drop it into the dropdown — no juggling key types or scopes; you get the right key.
 function pkGenerate(btn){
   if(btn){ btn.disabled=true; btn.innerHTML='<span class="spinner-border spinner-border-sm"></span>'; }
-  jpost('/edit/mintkey', {inst: inst(), label: ''}).then(d=>{
+  jpost('/edit/mintkey', {label: ''}).then(d=>{
     if(d && d.key){ const list=pkList(); list.push({label:(d.label||'editor key'), key:d.key}); pkSave(list); SELECTED_PK=d.key; renderBuilder(); msg('Test key minted — it fills the curl below.','info'); }
     else { if(btn){ btn.disabled=false; } msg('Could not mint a key','danger'); }
   }).catch(e=>{ if(btn){ btn.disabled=false; } msg(e.message||'Could not mint a key','danger'); });
@@ -236,7 +236,7 @@ const TEMPLATE = () => ({
 // ---- pipeline list ----
 async function loadList(){
   try{
-    const d = await jget('/edit/pipelines?inst='+encodeURIComponent(inst()));
+    const d = await jget('/edit/pipelines');
     const el=$('#plist'); el.innerHTML='';
     if(!d.pipelines.length){ el.innerHTML='<div class="small" style="color:var(--bs-tertiary-color)">No pipelines yet — click New.</div>'; return; }
     d.pipelines.forEach(p=>{
@@ -252,14 +252,14 @@ async function loadList(){
   }catch(e){ msg(e.message,'danger'); }
 }
 async function openPipeline(slug){
-  try{ const d=await jget('/edit/get?inst='+encodeURIComponent(inst())+'&slug='+encodeURIComponent(slug));
+  try{ const d=await jget('/edit/get?slug='+encodeURIComponent(slug));
     DEF=normalize(d.def); CURRENT=slug; DEBUG=null; SHAPES={}; OPEN=null; schedForceCustom=false; $('#runbox').innerHTML=''; msg('',''); renderBuilder(); loadShapes(); loadList();
   }catch(e){ msg(e.message,'danger'); }
 }
 function newPipeline(){ DEF=normalize(TEMPLATE()); CURRENT=null; DEBUG=null; SHAPES={}; OPEN=null; schedForceCustom=false; $('#runbox').innerHTML=''; msg('New pipeline — edit + Save.','info'); renderBuilder(); loadList(); }
 
 // the instance's connected connectors (for the connection step's dropdown; no secrets)
-async function loadConnectors(){ try{ const d=await jget('/edit/connectors?inst='+encodeURIComponent(inst())); CONNECTORS=d.connectors||[]; }catch(e){ CONNECTORS=[]; } if(DEF) renderBuilder(); }
+async function loadConnectors(){ try{ const d=await jget('/edit/connectors'); CONNECTORS=d.connectors||[]; }catch(e){ CONNECTORS=[]; } if(DEF) renderBuilder(); }
 function connStyle(type){ const c=CONNECTORS.find(x=>x.connector===type); return c?c.style:(type==='shopify'?'graphql':'rest'); }
 
 function normalize(def){
@@ -709,14 +709,14 @@ function applyJson(){ try{ DEF=normalize(JSON.parse($('#jsonBox').value)); OPEN=
 
 // ---- validate / save / delete ----
 async function validateDef(){ if(!DEF) return;
-  try{ const d=await jpost('/edit/validate',{inst:inst(),def:JSON.stringify(DEF)});
+  try{ const d=await jpost('/edit/validate',{def:JSON.stringify(DEF)});
     d.valid? msg('Valid ✓','success') : msg('Invalid: '+d.errors.join('; '),'danger'); }catch(e){ msg(e.message,'danger'); } }
 async function saveDef(){ if(!DEF) return;
-  try{ const d=await jpost('/edit/save',{inst:inst(),def:JSON.stringify(DEF)});
+  try{ const d=await jpost('/edit/save',{def:JSON.stringify(DEF)});
     if(d.ok){ CURRENT=DEF.slug; msg('Saved '+d.file+' ✓','success'); loadList(); } else msg('Not saved: '+(d.errors||[]).join('; '),'danger');
   }catch(e){ msg(e.message,'danger'); } }
 async function deleteDef(){ if(!CURRENT||!confirm('Delete '+CURRENT+'?')) return;
-  try{ await jpost('/edit/delete',{inst:inst(),slug:CURRENT}); CURRENT=null; DEF=null; $('#builder').innerHTML=''; loadList(); msg('Deleted.','secondary'); }catch(e){ msg(e.message,'danger'); } }
+  try{ await jpost('/edit/delete',{slug:CURRENT}); CURRENT=null; DEF=null; $('#builder').innerHTML=''; loadList(); msg('Deleted.','secondary'); }catch(e){ msg(e.message,'danger'); } }
 
 // ---- durable object: deliver a message / alarm ----
 async function deliverMsg(){
@@ -725,7 +725,7 @@ async function deliverMsg(){
   const trigger=$('#trigger')?$('#trigger').value:'message';
   let message={}; const raw=$('#ctx')?$('#ctx').value.trim():''; if(raw){ try{ message=JSON.parse(raw); }catch(e){ msg('Message is not valid JSON.','danger'); return; } }
   try{ await saveDef();
-    const d=await jpost('/edit/deliver',{inst:inst(),slug:DEF.slug,key:key,trigger:trigger,message:JSON.stringify(message)});
+    const d=await jpost('/edit/deliver',{slug:DEF.slug,key:key,trigger:trigger,message:JSON.stringify(message)});
     renderDelivery(d);
   }catch(e){ msg(e.message,'danger'); }
 }
@@ -741,7 +741,7 @@ function renderDelivery(d){
 // ---- normal run + watch ----
 async function runDef(){ if(!DEF||!DEF.slug){ msg('Save first.','warning'); return; }
   if(DEF.stateful){ return deliverMsg(); }
-  try{ await saveDef(); const d=await jpost('/edit/run',{inst:inst(),slug:DEF.slug,context:$('#ctx').value||'{}'}); watchRun(d.run_id); }catch(e){ msg(e.message,'danger'); } }
+  try{ await saveDef(); const d=await jpost('/edit/run',{slug:DEF.slug,context:$('#ctx').value||'{}'}); watchRun(d.run_id); }catch(e){ msg(e.message,'danger'); } }
 function watchRun(runId){
   if(watchTimer) clearInterval(watchTimer); DEBUG=null;
   const render=r=>{ let h=`<div class="mb-1"><b>Run #${runId}</b> <span class="st-${r.status}">${esc(r.status)}</span> <span style="color:var(--bs-tertiary-color)">${r.steps_done}/${r.steps_total}</span></div>`;
@@ -753,7 +753,7 @@ function watchRun(runId){
     if(r.error) h+=`<div class="st-failed small mt-1"><b>Failed:</b> ${esc(r.error)}</div>`;
     if(r.output!=null) h+=`<div class="small mt-2" style="color:var(--bs-tertiary-color)">output</div><pre class="io">${esc(JSON.stringify(r.output,null,2))}</pre>`;
     $('#runbox').innerHTML=h; };
-  const poll=async()=>{ try{ const r=await jget('/edit/runstatus?inst='+encodeURIComponent(inst())+'&run_id='+runId); render(r);
+  const poll=async()=>{ try{ const r=await jget('/edit/runstatus?run_id='+runId); render(r);
     if(['completed','failed','paused'].includes(r.status)){ clearInterval(watchTimer); watchTimer=null; } }catch(e){} };
   $('#runbox').innerHTML='<div class="small" style="color:var(--bs-tertiary-color)">Starting…</div>'; poll(); watchTimer=setInterval(poll,1000);
 }
@@ -761,13 +761,13 @@ function watchRun(runId){
 // ---- debugger ----
 async function debugStart(){ if(!DEF||!DEF.slug){ msg('Save first.','warning'); return; }
   try{ await saveDef(); $('#runbox').innerHTML='<div class="small" style="color:var(--bs-tertiary-color)">Starting debug…</div>';
-    const bp=await jpost('/edit/debug',{inst:inst(),slug:DEF.slug,context:$('#ctx').value||'{}'}); renderDebug(bp);
+    const bp=await jpost('/edit/debug',{slug:DEF.slug,context:$('#ctx').value||'{}'}); renderDebug(bp);
   }catch(e){ msg(e.message,'danger'); $('#runbox').innerHTML=''; } }
 function dbgMsg(t){ const dm=document.getElementById('debugMsg'); if(dm) dm.textContent=t; else msg(t,'danger'); }
 async function debugAct(action){
   const patch=$('#patchBox')?$('#patchBox').value.trim():'';
   let parsed={}; if(patch){ try{ parsed=JSON.parse(patch); }catch(e){ dbgMsg('Inject data is not valid JSON.'); return; } }
-  try{ const bp=await jpost('/edit/debugstep',{inst:inst(),run_id:DEBUG.run_id,action:action,patch:JSON.stringify(parsed)}); renderDebug(bp); }
+  try{ const bp=await jpost('/edit/debugstep',{run_id:DEBUG.run_id,action:action,patch:JSON.stringify(parsed)}); renderDebug(bp); }
   catch(e){ dbgMsg(e.message); }
 }
 function highlightDebugRow(stepName){
@@ -823,7 +823,7 @@ let VACLAST = null;   // last eligible field focused (chip-insert target)
 
 async function loadShapes(){
   if(!CURRENT){ SHAPES={}; return; }
-  try{ const d=await jget('/edit/varshapes?inst='+encodeURIComponent(inst())+'&slug='+encodeURIComponent(CURRENT));
+  try{ const d=await jget('/edit/varshapes?slug='+encodeURIComponent(CURRENT));
        SHAPES=(d&&d.shapes)?d.shapes:{}; }catch(e){ SHAPES={}; }
   if(DEF) renderBuilder();
 }

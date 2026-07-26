@@ -226,13 +226,10 @@ class Edit extends Control {
         if (!$core) { Flight::jsonError('Core unavailable.', 503); return [$s, null]; }
         $access = new Access($core);
 
-        $slug = (string) (Flight::request()->query->inst ?? $this->getParam('inst') ?? '');
-        if ($slug !== '') {
-            $inst = $access->resolveInstance($slug, (int) $s['member_id']);
-            if (!$inst) { Flight::jsonError('That instance was not found or you do not have access to it.', 403); return [$s, null]; }
-            return [$s, $inst];
-        }
-
+        // ONE input: the selected project. ?inst is gone — the editor's own JS used to
+        // pass it, which meant the instance a save landed in was decided by a query
+        // string the page had written for itself. Now the server decides, from the same
+        // source the shell's chip displays.
         $inst = Sso::projectInstance($access, (int) $s['member_id']);
         if (!$inst) {
             Flight::jsonError('No project selected — choose one at ' . Sso::projectPickerUrl(), 409);
