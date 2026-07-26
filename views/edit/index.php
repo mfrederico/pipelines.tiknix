@@ -82,7 +82,7 @@ $dsFile   = $coreRoot . '/views/components/design-system.php';
 <div class="ui-content">
 <?php if (!$project): ?>
   <div class="ui-panel"><div class="ui-panel-body text-center" style="color:var(--bs-secondary-color)">
-    No project selected — <a href="<?= $h($projectsUrl) ?>">choose one</a> to build its pipelines.
+    No project selected — <a href="<?= $h($projectsUrl) ?>" target="_top">choose one</a> to build its pipelines.
   </div></div>
 <?php else: ?>
   <div class="row g-3">
@@ -99,7 +99,7 @@ $dsFile   = $coreRoot . '/views/components/design-system.php';
         <label class="ui-eyebrow d-block mb-1">Project</label>
         <div class="d-flex align-items-center gap-2">
           <strong class="flex-grow-1"><?= $h($project['name']) ?></strong>
-          <a href="<?= $h($projectsUrl) ?>" title="Change project" class="text-decoration-none">
+          <a href="<?= $h($projectsUrl) ?>" target="_top" title="Change project" class="text-decoration-none">
             <i class="bi bi-grid-3x3-gap"></i>
           </a>
         </div>
