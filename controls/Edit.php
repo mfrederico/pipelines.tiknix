@@ -31,10 +31,23 @@ class Edit extends Control {
             $i['api_base'] = PipeFiles::baseUrl(PipeFiles::instanceDir($i));
             return $i;
         }, $access->instances((int) $s['member_id']));
+
+        // The project chosen in core — the editor shows ONE project's pipelines and links
+        // back to core to change it, rather than offering its own list.
+        $project = null;
+        $claim   = Sso::project();
+        if ($claim) {
+            foreach ($instances as $i) {
+                if ((int) ($i['id'] ?? 0) === $claim['id']) { $project = $i; break; }
+            }
+        }
+
         $this->render('edit/index', [
-            'instances'  => $instances,
-            'email'      => $s['email'],
-            'components' => StepRegistry::components(),
+            'instances'   => $instances,
+            'project'     => $project,
+            'projectsUrl' => Sso::projectPickerUrl(),
+            'email'       => $s['email'],
+            'components'  => StepRegistry::components(),
         ], false);
     }
 
@@ -202,17 +215,45 @@ class Edit extends Control {
 
     // ---- guards ------------------------------------------------------------
 
-    /** Require session + an authorized instance ( ?inst, else first accessible ). */
+    /**
+     * Require session + an authorized instance: an explicit ?inst (deep links keep
+     * working), otherwise the project chosen in CORE.
+     *
+     * NOT "first accessible" — that guess is what let the editor open a different
+     * project's pipelines than the one you had selected, with nothing in the UI to show
+     * the swap. If the chosen project is unavailable here, say so rather than
+     * substituting another.
+     */
     private function guard(): array {
         $s = Sso::session();
         if (!$s) { Flight::jsonError('Not signed in.', 401); return [null, null]; }
         $core = Kernel::coreDb();
         if (!$core) { Flight::jsonError('Core unavailable.', 503); return [$s, null]; }
         $access = new Access($core);
+
         $slug = (string) (Flight::request()->query->inst ?? $this->getParam('inst') ?? '');
-        $inst = $slug !== '' ? $access->resolveInstance($slug, (int) $s['member_id']) : ($access->instances((int) $s['member_id'])[0] ?? null);
-        if (!$inst) { Flight::jsonError('That instance was not found or you do not have access to it.', 403); return [$s, null]; }
+        if ($slug !== '') {
+            $inst = $access->resolveInstance($slug, (int) $s['member_id']);
+            if (!$inst) { Flight::jsonError('That instance was not found or you do not have access to it.', 403); return [$s, null]; }
+            return [$s, $inst];
+        }
+
+        $inst = $this->projectInstance($access, (int) $s['member_id']);
+        if (!$inst) {
+            Flight::jsonError('No project selected — choose one at ' . Sso::projectPickerUrl(), 409);
+            return [$s, null];
+        }
         return [$s, $inst];
+    }
+
+    /** The accessible instance matching the project chosen in core, or null. */
+    private function projectInstance(Access $access, int $memberId): ?array {
+        $project = Sso::project();
+        if (!$project) return null;
+        foreach ($access->instances($memberId) as $i) {
+            if ((int) ($i['id'] ?? 0) === $project['id']) return $i;
+        }
+        return null;
     }
 
     private function bodyDef(): ?array {

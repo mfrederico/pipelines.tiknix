@@ -80,22 +80,32 @@ $dsFile   = $coreRoot . '/views/components/design-system.php';
 <body>
 
 <div class="ui-content">
-<?php if (!$instances): ?>
+<?php if (!$project): ?>
   <div class="ui-panel"><div class="ui-panel-body text-center" style="color:var(--bs-secondary-color)">
-    You have no instances yet. Create one in the AI Builder, then build pipelines here.
+    No project selected — <a href="<?= $h($projectsUrl) ?>">choose one</a> to build its pipelines.
   </div></div>
 <?php else: ?>
   <div class="row g-3">
 
     <!-- ============ pipeline list ============ -->
     <div class="col-lg-3">
+      <?php
+      /* NO INSTANCE DROPDOWN. The project is chosen once, in core, and this editor edits
+         that project's pipelines. A second selector here is how you could save a pipeline
+         into a different project than the one you believed you were in. The hidden input
+         keeps the existing JS contract (everything reads #inst) without offering a choice. */
+      ?>
       <div class="pe-inst mb-3">
-        <label class="ui-eyebrow d-block mb-1" for="inst">Instance</label>
-        <select id="inst" class="form-select form-select-sm">
-          <?php foreach ($instances as $i): ?>
-            <option value="<?= $h($i['slug']) ?>" data-api-base="<?= $h($i['api_base'] ?? '') ?>"><?= $h($i['name']) ?> (<?= $h($i['slug']) ?>)<?= $i['owned'] ? '' : ' · team' ?></option>
-          <?php endforeach; ?>
-        </select>
+        <label class="ui-eyebrow d-block mb-1">Project</label>
+        <div class="d-flex align-items-center gap-2">
+          <strong class="flex-grow-1"><?= $h($project['name']) ?></strong>
+          <a href="<?= $h($projectsUrl) ?>" title="Change project" class="text-decoration-none">
+            <i class="bi bi-grid-3x3-gap"></i>
+          </a>
+        </div>
+        <div style="color:var(--bs-secondary-color);font-size:.8rem"><?= $h($project['slug']) ?></div>
+        <input type="hidden" id="inst" value="<?= $h($project['slug']) ?>"
+               data-api-base="<?= $h($project['api_base'] ?? '') ?>">
       </div>
       <div class="d-flex justify-content-between align-items-center mb-2">
         <span class="ui-eyebrow">Pipelines</span>
@@ -162,7 +172,9 @@ const PUBLIC_TYPES = TYPES.filter(t => !COMPONENTS[t].internal);   // internal s
 const $ = s => document.querySelector(s);
 const inst = () => $('#inst') ? $('#inst').value : '';
 // Public base URL of the selected instance (host that serves /pipeline/api/<slug>).
-const instApiBase = () => { const s=$('#inst'); const o=s&&s.selectedOptions&&s.selectedOptions[0]; return (o&&o.getAttribute('data-api-base'))||''; };
+// #inst is a hidden input carrying the selected project (no dropdown), so read the
+// attribute off the element itself rather than a selected <option>.
+const instApiBase = () => { const s=$('#inst'); return (s&&s.getAttribute('data-api-base'))||''; };
 function copyText(t,btn){
   const done=()=>{ if(btn){ const i=btn.querySelector('i'); if(i){ const p=i.className; i.className='bi bi-check2'; setTimeout(()=>i.className=p,1200);} } };
   // execCommand fallback works inside the sidecar iframe where the async Clipboard API
@@ -961,7 +973,7 @@ document.addEventListener('keydown', e=>{
 });
 
 // ---- boot ----
-$('#inst') && ($('#inst').onchange=()=>{ CURRENT=null; DEF=null; SHAPES={}; OPEN=null; CONNECTORS=[]; $('#builder').innerHTML=''; $('#runbox').innerHTML=''; loadList(); loadConnectors(); });
+// No onchange: the project is switched in core, which reloads this page anyway.
 <?php if ($instances): ?>loadList(); loadConnectors();<?php endif; ?>
 </script>
 </body>
