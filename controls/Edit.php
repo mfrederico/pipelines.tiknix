@@ -32,15 +32,10 @@ class Edit extends Control {
             return $i;
         }, $access->instances((int) $s['member_id']));
 
-        // The project chosen in core — the editor shows ONE project's pipelines and links
-        // back to core to change it, rather than offering its own list.
-        $project = null;
-        $claim   = Sso::project();
-        if ($claim) {
-            foreach ($instances as $i) {
-                if ((int) ($i['id'] ?? 0) === $claim['id']) { $project = $i; break; }
-            }
-        }
+        // ONE resolution point (Sso::projectInstance) — re-attach api_base, which only
+        // this page needs, rather than re-deriving which project is selected.
+        $project = Sso::projectInstance($access, (int) $s['member_id']);
+        if ($project) $project['api_base'] = PipeFiles::baseUrl(PipeFiles::instanceDir($project));
 
         $this->render('edit/index', [
             'instances'   => $instances,
@@ -238,22 +233,12 @@ class Edit extends Control {
             return [$s, $inst];
         }
 
-        $inst = $this->projectInstance($access, (int) $s['member_id']);
+        $inst = Sso::projectInstance($access, (int) $s['member_id']);
         if (!$inst) {
             Flight::jsonError('No project selected — choose one at ' . Sso::projectPickerUrl(), 409);
             return [$s, null];
         }
         return [$s, $inst];
-    }
-
-    /** The accessible instance matching the project chosen in core, or null. */
-    private function projectInstance(Access $access, int $memberId): ?array {
-        $project = Sso::project();
-        if (!$project) return null;
-        foreach ($access->instances($memberId) as $i) {
-            if ((int) ($i['id'] ?? 0) === $project['id']) return $i;
-        }
-        return null;
     }
 
     private function bodyDef(): ?array {
