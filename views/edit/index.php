@@ -974,7 +974,12 @@ document.addEventListener('keydown', e=>{
 
 // ---- boot ----
 // No onchange: the project is switched in core, which reloads this page anyway.
-<?php if ($instances): ?>loadList(); loadConnectors();<?php endif; ?>
+//
+// Guarded on $project, not $instances. With projects on the account but none SELECTED,
+// the page renders the "choose one" panel and none of the editor markup — so booting
+// anyway fetched a list for nobody (409) and then threw on the #plist that was never
+// rendered. Deleting the project you were working on lands you exactly there.
+<?php if ($project): ?>loadList(); loadConnectors();<?php endif; ?>
 </script>
 </body>
 </html>
