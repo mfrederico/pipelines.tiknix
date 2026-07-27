@@ -122,7 +122,7 @@ $dsFile   = $coreRoot . '/views/components/design-system.php';
         <button class="btn btn-sm btn-success" onclick="runDef()"><i class="bi bi-play-fill"></i> Run</button>
         <button class="btn btn-sm btn-warning" onclick="debugStart()"><i class="bi bi-bug"></i> Debug</button>
         <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="toggleJson()"><i class="bi bi-code-slash"></i> JSON</button>
-        <button class="btn btn-sm btn-outline-danger" onclick="deleteDef()"><i class="bi bi-trash"></i></button>
+        <button class="btn btn-sm btn-outline-danger" aria-label="Delete pipeline" title="Delete pipeline" onclick="deleteDef()"><i class="bi bi-trash"></i></button>
       </div>
       <div id="msg" class="small mb-2"></div>
 
